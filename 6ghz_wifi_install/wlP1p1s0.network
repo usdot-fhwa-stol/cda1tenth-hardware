@@ -1,0 +1,10 @@
+[Match]
+Name=wlP1p1s0
+
+[Network]
+# Saxtonlink we want dhcp
+DHCP=yes
+## CDA1T we want a static IP
+# Address=192.168.1.50/24
+# Gateway=192.168.1.1
+# DNS=8.8.8.8

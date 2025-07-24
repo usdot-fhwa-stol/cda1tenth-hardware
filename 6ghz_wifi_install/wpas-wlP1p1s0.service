@@ -1,0 +1,15 @@
+[Unit]
+# Description=WPA supplicant daemon (ssid CDA1T6GHZ)
+Description=WPA supplicant daemon (ssid saxtonlink)
+Before=network.target
+After=network-pre.target
+Wants=network.target
+
+[Service]
+Type=simple
+# ExecStart=/sbin/wpa_supplicant -i wlP1p1s0 -c /etc/wpa_supplicant/wpas-cda1t6ghz.conf -D nl80211
+ExecStart=/sbin/wpa_supplicant -i wlP1p1s0 -c /etc/wpa_supplicant/wpas-saxtonlink.conf -D nl80211
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
