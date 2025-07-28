@@ -46,10 +46,10 @@ sudo systemctl stop NetworkManager
 sudo systemctl disable NetworkManager
 sudo systemctl disable wpa_supplicant.service
 sudo pkill wpa_supplicant
-sudo cp wpa_supplicant /usr/sbin
-sudo cp wpa_cli /usr/sbin
-sudo cp hostapd /usr/sbin
-sudo cp hostapd_cli /usr/sbin
+sudo cp ~/wifi_driver_build/ifx-hostap/wpa_supplicant/wpa_supplicant /usr/sbin
+sudo cp ~/wifi_driver_build/ifx-hostap/wpa_supplicant/wpa_cli /usr/sbin
+sudo cp ~/wifi_driver_build/ifx-hostap/hostapd/hostapd /usr/sbin
+sudo cp ~/wifi_driver_build/ifx-hostap/hostapd/hostapd_cli /usr/sbin
 
 iw list
 # You should see: 
@@ -59,12 +59,14 @@ iw list
 # Frequencies: 
 #         * 5955 MHz [1] (12.0dBm) (no IR)
 # ...
-# 'no IR' means the device is not currently able to use that frequency
+# Make sure you have 5955 as a listed frequency. If you don't see 'no IR', that's fine
 # The default network manager doesn't support this device, we need to build and use wpa_supplicant instead
 
 # Now, to actually run a wifi network you need to set up a wpa_supplicant config file. If you want to connect to a 6GHz network, follow the instructions below. If you want to connect to a 2.4/5GHz network, follow the instructions at the bottom of the page
 # For 6GHz, edit the file wpas-example-6ghz.conf to include your wifi SSID and password, and you can rename it (here we use wpas-cda1t6ghz.conf)
-sudo pkill wpa_supplicant && sudo wpa_supplicant -i wlP1p1s0 -c ~/wifi_driver_build/wpas-cda1t6ghz.conf
+sudo pkill wpa_supplicant
+sudo wpa_supplicant -i wlP1p1s0 -c ~/wifi_driver_build/wpas-cda1t6ghz.conf
+
 # in another terminal
 iw dev wlP1p1s0 info # debugging
 sudo dhcpclient wlP1p1s0
@@ -92,8 +94,9 @@ sudo systemctl start systemd-networkd
 
 #####################################################################
 # To instead connect to a 2.4/5GHz network: 
-wpa_passphrase "username" "password" | sudo tee ~/wifi_driver_build/saxtonlink_wpas.conf
-sudo pkill wpa_supplicant && sudo wpa_supplicant -i wlP1p1s0 -c ~/wifi_driver_build/saxtonlink_wpas.conf -B
+wpa_passphrase "username" "password" | sudo tee ~/wifi_driver_build/wpas-saxtonlink.conf
+sudo pkill wpa_supplicant
+sudo wpa_supplicant -i wlP1p1s0 -c ~/wifi_driver_build/saxtonlink_wpas.conf -B
 sudo dhcpclient wlP1p1s0
 sudo iw wlP1p1s0 link # debugging
 ifconfig # debugging

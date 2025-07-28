@@ -1,3 +1,4 @@
+# This repo includes a pre-built copy of ifx-backports, so you don't need to run this if you don't want to
 # Near the end there is some code you need to add to a file. Also, it's just super sketch so I would recommend running it line-by-line and babying the output to make sure you don't fall off the rails <3
 # Also, this DOES NOT WORK for Jetpack 6.0, ${WORK_DIR}/Linux_for_Tegra/tools/l4t_update_initrd.sh does not exist while attempting to build the kernel. I assume that it will not work for any other Jetpack version other than 6.2. 
 
