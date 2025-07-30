@@ -9,8 +9,8 @@ FILE_DESCRIPTION(
 /* implementation_level */ '2;1');
 
 FILE_NAME(
-/* name */ 'Rear Bumper_v10.step',
-/* time_stamp */ '2025-07-22T16:51:05-06:00',
+/* name */ 'Rear Bumper_v11.step',
+/* time_stamp */ '2025-07-30T00:11:14-06:00',
 /* author */ (''),
 /* organization */ (''),
 /* preprocessor_version */ 'ST-DEVELOPER v20.1',
@@ -5475,16 +5475,16 @@ SOLID_ANGLE_UNIT()
 #4831=PRODUCT_DEFINITION_SHAPE('',$,#4834);
 #4832=SHAPE_REPRESENTATION('',(#940),#4824);
 #4833=PRODUCT_DEFINITION_CONTEXT('part definition',#4838,'design');
-#4834=PRODUCT_DEFINITION('Rear Bumper','Rear Bumper v10',#4835,#4833);
+#4834=PRODUCT_DEFINITION('Rear Bumper','Rear Bumper v11',#4835,#4833);
 #4835=PRODUCT_DEFINITION_FORMATION('',$,#4840);
-#4836=PRODUCT_RELATED_PRODUCT_CATEGORY('Rear Bumper v10',
-'Rear Bumper v10',(#4840));
+#4836=PRODUCT_RELATED_PRODUCT_CATEGORY('Rear Bumper v11',
+'Rear Bumper v11',(#4840));
 #4837=APPLICATION_PROTOCOL_DEFINITION('international standard',
 'automotive_design',2009,#4838);
 #4838=APPLICATION_CONTEXT(
 'Core Data for Automotive Mechanical Design Process');
 #4839=PRODUCT_CONTEXT('part definition',#4838,'mechanical');
-#4840=PRODUCT('Rear Bumper','Rear Bumper v10',$,(#4839));
+#4840=PRODUCT('Rear Bumper','Rear Bumper v11',$,(#4839));
 #4841=PRESENTATION_STYLE_ASSIGNMENT((#4843));
 #4842=PRESENTATION_STYLE_ASSIGNMENT((#4844));
 #4843=SURFACE_STYLE_USAGE(.BOTH.,#4845);

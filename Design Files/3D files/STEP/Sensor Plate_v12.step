@@ -9,8 +9,8 @@ FILE_DESCRIPTION(
 /* implementation_level */ '2;1');
 
 FILE_NAME(
-/* name */ 'Sensor Plate_v11.step',
-/* time_stamp */ '2025-07-22T16:51:27-06:00',
+/* name */ 'Sensor Plate_v12.step',
+/* time_stamp */ '2025-07-30T00:10:37-06:00',
 /* author */ (''),
 /* organization */ (''),
 /* preprocessor_version */ 'ST-DEVELOPER v20.1',
@@ -1673,16 +1673,16 @@ SOLID_ANGLE_UNIT()
 #1600=PRODUCT_DEFINITION_SHAPE('',$,#1603);
 #1601=SHAPE_REPRESENTATION('',(#934),#1593);
 #1602=PRODUCT_DEFINITION_CONTEXT('part definition',#1607,'design');
-#1603=PRODUCT_DEFINITION('Sensor Plate','Sensor Plate v11',#1604,#1602);
+#1603=PRODUCT_DEFINITION('Sensor Plate','Sensor Plate v12',#1604,#1602);
 #1604=PRODUCT_DEFINITION_FORMATION('',$,#1609);
-#1605=PRODUCT_RELATED_PRODUCT_CATEGORY('Sensor Plate v11',
-'Sensor Plate v11',(#1609));
+#1605=PRODUCT_RELATED_PRODUCT_CATEGORY('Sensor Plate v12',
+'Sensor Plate v12',(#1609));
 #1606=APPLICATION_PROTOCOL_DEFINITION('international standard',
 'automotive_design',2009,#1607);
 #1607=APPLICATION_CONTEXT(
 'Core Data for Automotive Mechanical Design Process');
 #1608=PRODUCT_CONTEXT('part definition',#1607,'mechanical');
-#1609=PRODUCT('Sensor Plate','Sensor Plate v11',$,(#1608));
+#1609=PRODUCT('Sensor Plate','Sensor Plate v12',$,(#1608));
 #1610=PRESENTATION_STYLE_ASSIGNMENT((#1612));
 #1611=PRESENTATION_STYLE_ASSIGNMENT((#1613));
 #1612=SURFACE_STYLE_USAGE(.BOTH.,#1614);

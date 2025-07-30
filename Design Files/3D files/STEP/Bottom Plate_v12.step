@@ -9,8 +9,8 @@ FILE_DESCRIPTION(
 /* implementation_level */ '2;1');
 
 FILE_NAME(
-/* name */ 'Bottom Plate_v11.step',
-/* time_stamp */ '2025-07-22T16:50:32-06:00',
+/* name */ 'Bottom Plate_v12.step',
+/* time_stamp */ '2025-07-30T00:10:59-06:00',
 /* author */ (''),
 /* organization */ (''),
 /* preprocessor_version */ 'ST-DEVELOPER v20.1',
@@ -4909,16 +4909,16 @@ SOLID_ANGLE_UNIT()
 #4738=PRODUCT_DEFINITION_SHAPE('',$,#4741);
 #4739=SHAPE_REPRESENTATION('',(#2642),#4731);
 #4740=PRODUCT_DEFINITION_CONTEXT('part definition',#4745,'design');
-#4741=PRODUCT_DEFINITION('Bottom Plate','Bottom Plate v11',#4742,#4740);
+#4741=PRODUCT_DEFINITION('Bottom Plate','Bottom Plate v12',#4742,#4740);
 #4742=PRODUCT_DEFINITION_FORMATION('',$,#4747);
-#4743=PRODUCT_RELATED_PRODUCT_CATEGORY('Bottom Plate v11',
-'Bottom Plate v11',(#4747));
+#4743=PRODUCT_RELATED_PRODUCT_CATEGORY('Bottom Plate v12',
+'Bottom Plate v12',(#4747));
 #4744=APPLICATION_PROTOCOL_DEFINITION('international standard',
 'automotive_design',2009,#4745);
 #4745=APPLICATION_CONTEXT(
 'Core Data for Automotive Mechanical Design Process');
 #4746=PRODUCT_CONTEXT('part definition',#4745,'mechanical');
-#4747=PRODUCT('Bottom Plate','Bottom Plate v11',$,(#4746));
+#4747=PRODUCT('Bottom Plate','Bottom Plate v12',$,(#4746));
 #4748=PRESENTATION_STYLE_ASSIGNMENT((#4750));
 #4749=PRESENTATION_STYLE_ASSIGNMENT((#4751));
 #4750=SURFACE_STYLE_USAGE(.BOTH.,#4752);

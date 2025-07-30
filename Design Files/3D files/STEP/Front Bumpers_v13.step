@@ -9,8 +9,8 @@ FILE_DESCRIPTION(
 /* implementation_level */ '2;1');
 
 FILE_NAME(
-/* name */ 'Front Bumpers_v12.step',
-/* time_stamp */ '2025-07-22T16:50:35-06:00',
+/* name */ 'Front Bumpers_v13.step',
+/* time_stamp */ '2025-07-30T00:10:10-06:00',
 /* author */ (''),
 /* organization */ (''),
 /* preprocessor_version */ 'ST-DEVELOPER v20.1',
@@ -2266,16 +2266,16 @@ SOLID_ANGLE_UNIT()
 #2137=PRODUCT_DEFINITION_SHAPE('',$,#2140);
 #2138=SHAPE_REPRESENTATION('',(#1142),#2130);
 #2139=PRODUCT_DEFINITION_CONTEXT('part definition',#2144,'design');
-#2140=PRODUCT_DEFINITION('Front Bumpers','Front Bumpers v12',#2141,#2139);
+#2140=PRODUCT_DEFINITION('Front Bumpers','Front Bumpers v13',#2141,#2139);
 #2141=PRODUCT_DEFINITION_FORMATION('',$,#2146);
-#2142=PRODUCT_RELATED_PRODUCT_CATEGORY('Front Bumpers v12',
-'Front Bumpers v12',(#2146));
+#2142=PRODUCT_RELATED_PRODUCT_CATEGORY('Front Bumpers v13',
+'Front Bumpers v13',(#2146));
 #2143=APPLICATION_PROTOCOL_DEFINITION('international standard',
 'automotive_design',2009,#2144);
 #2144=APPLICATION_CONTEXT(
 'Core Data for Automotive Mechanical Design Process');
 #2145=PRODUCT_CONTEXT('part definition',#2144,'mechanical');
-#2146=PRODUCT('Front Bumpers','Front Bumpers v12',$,(#2145));
+#2146=PRODUCT('Front Bumpers','Front Bumpers v13',$,(#2145));
 #2147=PRESENTATION_STYLE_ASSIGNMENT((#2149));
 #2148=PRESENTATION_STYLE_ASSIGNMENT((#2150));
 #2149=SURFACE_STYLE_USAGE(.BOTH.,#2151);

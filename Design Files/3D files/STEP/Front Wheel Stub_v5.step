@@ -10,14 +10,14 @@ FILE_DESCRIPTION(
 
 FILE_NAME(
 /* name */ 'Front Wheel Stub_v5.step',
-/* time_stamp */ '2025-07-22T16:50:46-06:00',
+/* time_stamp */ '2025-07-30T00:10:12-06:00',
 /* author */ (''),
 /* organization */ (''),
 /* preprocessor_version */ 'ST-DEVELOPER v20.1',
 /* originating_system */ 'Autodesk Translation Framework v14.10.0.0',
 /* authorisation */ '');
 
-FILE_SCHEMA (('AUTOMOTIVE_DESIGN { 1 0 10303 214 3 1 1 }'));
+FILE_SCHEMA (('AUTOMOTIVE_DESIGN { 1 0 10303 214 3 1 1 }','TECHNICAL_DATA_PACKAGING'));
 ENDSEC;
 
 DATA;
