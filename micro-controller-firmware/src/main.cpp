@@ -53,8 +53,8 @@ geometry_msgs__msg__Twist twist_msg;
 
 float g_wheelbase = 0.185f;
 float g_track_width = 0.15f; 
-float g_steering_scaling_factor = 1.5f; // Scaling factor for encoder angle to wheel steering angle
-float o_speed_scaling_factor = 1.5f; // Factor to scale the speed command
+float g_steering_scaling_factor = 0.8f; // Scaling factor for encoder angle to wheel steering angle
+float o_speed_scaling_factor = 1.0f; // Factor to scale the speed command
 
 // Car control instance
 Car car(CS_RIGHT, CS_LEFT, CS_STEER);
