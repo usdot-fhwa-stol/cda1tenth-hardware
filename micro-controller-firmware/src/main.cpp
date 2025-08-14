@@ -55,7 +55,7 @@ float g_wheelbase = 0.185f;
 float g_track_width = 0.15f; 
 
 // Desmos link: https://www.desmos.com/calculator/hzw38ukeor
-float g_steering_scaling_factor = 0.8f; // Scaling factor for encoder angle to wheel steering angle
+float g_steering_scaling_factor = 0.87f; // Scaling factor for encoder angle to wheel steering angle
 float o_speed_scaling_factor = 1.0f; // Factor to scale the speed command
 
 // Car control instance
