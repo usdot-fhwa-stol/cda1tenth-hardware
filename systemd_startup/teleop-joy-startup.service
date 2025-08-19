@@ -1,0 +1,11 @@
+[Unit]
+Description=Start the ROS2 teleop joy node, /Joy -> /cmd_vel
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/bin/teleop-joy-startup.sh
+#Restart=on-failure
+
+[Install]
+WantedBy=default.target
