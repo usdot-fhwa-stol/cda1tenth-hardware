@@ -16,7 +16,6 @@
 #include <rclc/executor.h>
 #include <rmw_microros/rmw_microros.h>
 
-#include <std_msgs/msg/int32.h>
 #include <geometry_msg/msg/vehicle_geometry.h>
 #include <geometry_msgs/msg/twist.h>
 #include <std_msgs/msg/float32_multi_array.h>
@@ -36,18 +35,14 @@ rcl_node_t node;
 rcl_timer_t motor_rpm_timer;
 rclc_executor_t executor;
 rcl_allocator_t allocator;
-rcl_publisher_t publisher;
 rcl_subscription_t twist_subscriber;
-std_msgs__msg__Int32 msg;
 
 // Motor RPM publisher
 rcl_publisher_t motor_rpm_publisher;
 std_msgs__msg__Float32MultiArray motor_rpm_msg;
 
 // Additional ROS2 objects
-rcl_subscription_t subscriber;
 rcl_subscription_t geom_subscriber;
-std_msgs__msg__Int32 sub_msg;
 geometry_msg__msg__VehicleGeometry geom_msg;
 geometry_msgs__msg__Twist twist_msg;
 
@@ -57,6 +52,10 @@ float g_track_width = 0.15f;
 // Desmos link: https://www.desmos.com/calculator/hzw38ukeor
 float g_steering_scaling_factor = 0.87f; // Scaling factor for encoder angle to wheel steering angle
 float o_speed_scaling_factor = 1.0f; // Factor to scale the speed command
+
+// Steering control constants
+const float MIN_SPEED_THRESHOLD = 0.1f; // m/s - minimum speed for bicycle model
+const float LOW_SPEED_STEERING_SCALE = 0.5f; // Reduced scaling for low speed steering
 
 // Car control instance
 Car car(CS_RIGHT, CS_LEFT, CS_STEER);
@@ -107,7 +106,17 @@ void motor_rpm_timer_callback(rcl_timer_t * timer, int64_t last_call_time)
 
 void twist_callback(const void * msgin) {
   const auto * twist = static_cast<const geometry_msgs__msg__Twist *>(msgin);
-  float steering_angle_rad = twist->angular.z * g_steering_scaling_factor; // Scale the steering angle
+  
+  // Use bicycle model for proper steering angle calculation
+  float steering_angle_rad = 0.0f;
+  
+  if (fabsf(twist->linear.x) > MIN_SPEED_THRESHOLD) {
+    // Calculate steering angle using bicycle model: δ = atan2(L * ω, v)
+    steering_angle_rad = atan2f(twist->angular.z * g_wheelbase, twist->linear.x) * g_steering_scaling_factor;
+  } else {
+    // At very low speeds, use a simplified approach to avoid division by zero
+    steering_angle_rad = twist->angular.z * g_steering_scaling_factor * LOW_SPEED_STEERING_SCALE;
+  }
 
   float max_steering_angle = 0.45f * g_steering_scaling_factor; // ~30 degrees in radians
 
@@ -292,6 +301,12 @@ void destroy_entities()
   rclc_executor_fini(&executor);
   rcl_node_fini(&node);
   rclc_support_fini(&support);
+  
+  // Free allocated memory
+  if (motor_rpm_msg.data.data != NULL) {
+    free(motor_rpm_msg.data.data);
+    motor_rpm_msg.data.data = NULL;
+  }
 }
 
 void setup() {
@@ -370,8 +385,6 @@ void loop() {
       break;
   }
   
-
-  // testMotorControl();
   if (car_initialized) {
     car.updateControlLoops();
   }
