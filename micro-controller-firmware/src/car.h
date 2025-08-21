@@ -23,6 +23,27 @@
 #define MOTOR_STEPS 200
 #define MICROSTEPS 16
 
+// Steering sensor parameters
+#define STEERING_SENSOR_PIN 18
+#define STEERING_SENSOR_MAX_VALUE 4095.0f
+#define DEGREES_PER_REVOLUTION 360.0f
+
+// Encoder parameters
+#define ENCODER_TICKS_PER_REVOLUTION 4000.0f
+
+// Steering control parameters
+#define STEERING_DEADBAND 0.5f
+#define STEERING_KP 400.0f
+#define STEERING_MAX_SPEED 12000.0f
+#define STEERING_ERROR_THRESHOLD 5.0f
+#define STEERING_CURRENT_UPDATE_INTERVAL 5000  // microseconds
+
+// Drive motor control parameters
+#define DRIVE_ERROR_GAIN 0.1f
+#define DRIVE_STALL_THRESHOLD 0.5f
+#define DRIVE_STALL_REDUCTION 250
+#define DRIVE_MAX_STALL_COUNT 5
+
 class SteeringMotor {
 public:
   TMC5160Stepper driver;
@@ -32,8 +53,6 @@ public:
   int32_t targetSpeed = 0;
   int32_t lastAppliedSpeed = INT32_MIN;
   uint32_t lastApplyMicros = 0;
-  uint8_t currentRunCurrent = 0xFF;
-  uint8_t currentHoldCurrent = 0xFF;
   uint32_t lastCurrentUpdateMicros = 0;
 
   SteeringMotor(int cs);

@@ -1,5 +1,6 @@
 #include "car.h"
 #include <limits.h>
+#include <math.h>
 
 SteeringMotor::SteeringMotor(int cs) : driver(cs, R_SENSE), cs_pin(cs) {}
 
@@ -16,49 +17,50 @@ void SteeringMotor::begin() {
   driver.pwm_autoscale(true);
   driver.toff(3);
   driver.blank_time(24);
-  driver.semin(5);
-  driver.semax(2);
-  driver.sedn(0b01);
-  driver.VDCMIN(0);
-  driver.a1(0);
-  driver.v1(0);
+
+  driver.a1(500);
+  driver.v1(500);
   driver.AMAX(5000);
   driver.DMAX(5000);
-  driver.VMAX(16000);
-  driver.d1(0);
+  driver.VMAX(8000);
+  driver.d1(500);
   driver.VSTOP(10);
-  driver.RAMPMODE(0);
+
+  driver.RAMPMODE(1);
 }
 
-void SteeringMotor::applySpeed() {
-  // Rate-limit SPI writes and avoid redundant register updates
-  const uint32_t now = micros();
-  const bool speedChanged = (targetSpeed != lastAppliedSpeed);
-  const bool timeElapsed = (now - lastApplyMicros) >= 2000; // ~2 ms
-  if (!speedChanged && !timeElapsed) {
-    return;
-  }
-  lastApplyMicros = now;
-  lastAppliedSpeed = targetSpeed;
-
-  driver.RAMPMODE(2); // Velocity mode
-  driver.shaft(targetSpeed > 0);
-  driver.VMAX(abs(targetSpeed));
+void SteeringMotor::setTargetAngle(float angle) {
+  targetAngle = angle;
+  float stepsPerRev = MOTOR_STEPS * MICROSTEPS;
+  float targetSteps = (angle / DEGREES_PER_REVOLUTION) * stepsPerRev;
+  driver.XTARGET((int32_t)targetSteps);
 }
 
 void SteeringMotor::setSpeed(int32_t speed) {
   targetSpeed = speed;
 }
 
+void SteeringMotor::applySpeed() {
+  const uint32_t now = micros();
+  
+  // Only apply speed if it has changed or enough time has passed
+  if (targetSpeed != lastAppliedSpeed || (now - lastApplyMicros) > 1000) {
+    driver.VMAX(abs(targetSpeed));
+    driver.shaft(targetSpeed < 0);
+    lastAppliedSpeed = targetSpeed;
+    lastApplyMicros = now;
+  }
+}
+
 float SteeringMotor::getSteeringAngle() {
-  int raw = analogRead(18);
-  float angle = ((float)raw / 4095.0f) * 360.0f; // Map to 0 to 360 degrees
+  int raw = analogRead(STEERING_SENSOR_PIN);
+  float angle = ((float)raw / STEERING_SENSOR_MAX_VALUE) * DEGREES_PER_REVOLUTION; // Map to 0 to 360 degrees
   return angle;
 }
 
 float SteeringMotor::normalizeAngle(float angle) {
-    while (angle > 180.0f) angle -= 360.0f;
-    while (angle < -180.0f) angle += 360.0f;
+    while (angle > 180.0f) angle -= DEGREES_PER_REVOLUTION;
+    while (angle < -180.0f) angle += DEGREES_PER_REVOLUTION;
     return angle;
 }
  
@@ -72,12 +74,11 @@ void SteeringMotor::updatePosition() {
     // Error calculation with rollover handling (-180° to 180°)
     float error = normalizeAngle(normalizedTarget - currentAngle);
  
-    float deadband = 0.5f;
-    if (fabsf(error) < deadband) {
+    if (fabsf(error) < STEERING_DEADBAND) {
         setSpeed(0);
         // Reduce run current when within deadband to lower heat
         const uint32_t now = micros();
-        if (now - lastCurrentUpdateMicros > 5000) {
+        if (now - lastCurrentUpdateMicros > STEERING_CURRENT_UPDATE_INTERVAL) {
             driver.irun(10);
             driver.ihold(3);
             lastCurrentUpdateMicros = now;
@@ -85,19 +86,18 @@ void SteeringMotor::updatePosition() {
         return;
     }
  
-    float Kp = 400.0f;
-    float speed = Kp * error;
+    float speed = STEERING_KP * error;
  
     // Clamp speed
-    if (speed > 12000.0f) speed = 12000.0f;
-    if (speed < -12000.0f) speed = -12000.0f;
+    if (speed > STEERING_MAX_SPEED) speed = STEERING_MAX_SPEED;
+    if (speed < -STEERING_MAX_SPEED) speed = -STEERING_MAX_SPEED;
  
     setSpeed((int32_t)speed);
  
     // Adjust motor current based on error magnitude
     const uint32_t now = micros();
-    if (now - lastCurrentUpdateMicros > 5000) {
-        if (fabsf(error) > 5.0f) {
+    if (now - lastCurrentUpdateMicros > STEERING_CURRENT_UPDATE_INTERVAL) {
+        if (fabsf(error) > STEERING_ERROR_THRESHOLD) {
             driver.irun(45);
             driver.ihold(6);
         } else {
@@ -185,25 +185,27 @@ void DriveMotor::updateControlLoop() {
   uint32_t now = micros();
   uint32_t dt = now - last_time;
   int32_t delta_enc = current_enc - last_enc;
-  float measured_ticks_per_sec = (float)delta_enc * 1e6f / dt;
-  float measured_steps_per_sec = measured_ticks_per_sec * (MOTOR_STEPS * MICROSTEPS / 4000.0f);
-  measured_steps_per_sec = abs(measured_steps_per_sec);
-
-  // Calculate current RPM
-  current_rpm = (measured_steps_per_sec / (MOTOR_STEPS * MICROSTEPS)) * 60.0f;
-
+  
+  // Avoid division by zero
   if (dt > 0) {
-    float error = target_steps_per_sec - measured_steps_per_sec;
-    int32_t adjustment = (int32_t)(error * 0.1f);
+    float measured_ticks_per_sec = (float)delta_enc * 1e6f / dt;
+    float measured_steps_per_sec = measured_ticks_per_sec * (MOTOR_STEPS * MICROSTEPS / ENCODER_TICKS_PER_REVOLUTION);
+    measured_steps_per_sec = abs(measured_steps_per_sec);
 
-    if (measured_steps_per_sec < (0.5f * step_rate_cmd)) {
+    // Calculate current RPM
+    current_rpm = (measured_steps_per_sec / (MOTOR_STEPS * MICROSTEPS)) * 60.0f;
+
+    float error = target_steps_per_sec - measured_steps_per_sec;
+    int32_t adjustment = (int32_t)(error * DRIVE_ERROR_GAIN);
+
+    if (measured_steps_per_sec < (DRIVE_STALL_THRESHOLD * step_rate_cmd)) {
       stall_counter++;
     } else {
       stall_counter = 0;
     }
 
-    if (stall_counter > 5) {
-      step_rate_cmd -= 250 * stall_counter;
+    if (stall_counter > DRIVE_MAX_STALL_COUNT) {
+      step_rate_cmd -= DRIVE_STALL_REDUCTION * stall_counter;
       if ((int32_t)step_rate_cmd < 0) step_rate_cmd = 0;
     } else {
       step_rate_cmd += adjustment;
@@ -252,7 +254,7 @@ void Car::begin() {
 void Car::setSteeringAngle(float angle) {
   lock();
   steeringAngle = angle;
-  steeringMotor.targetAngle = angle;
+  steeringMotor.setTargetAngle(angle);
   unlock();
 }
 

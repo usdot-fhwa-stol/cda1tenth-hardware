@@ -16,7 +16,6 @@
 #include <rclc/executor.h>
 #include <rmw_microros/rmw_microros.h>
 
-#include <std_msgs/msg/int32.h>
 #include <geometry_msg/msg/vehicle_geometry.h>
 #include <geometry_msgs/msg/twist.h>
 #include <std_msgs/msg/float32_multi_array.h>
@@ -36,18 +35,14 @@ rcl_node_t node;
 rcl_timer_t motor_rpm_timer;
 rclc_executor_t executor;
 rcl_allocator_t allocator;
-rcl_publisher_t publisher;
 rcl_subscription_t twist_subscriber;
-std_msgs__msg__Int32 msg;
 
 // Motor RPM publisher
 rcl_publisher_t motor_rpm_publisher;
 std_msgs__msg__Float32MultiArray motor_rpm_msg;
 
 // Additional ROS2 objects
-rcl_subscription_t subscriber;
 rcl_subscription_t geom_subscriber;
-std_msgs__msg__Int32 sub_msg;
 geometry_msg__msg__VehicleGeometry geom_msg;
 geometry_msgs__msg__Twist twist_msg;
 
@@ -292,6 +287,12 @@ void destroy_entities()
   rclc_executor_fini(&executor);
   rcl_node_fini(&node);
   rclc_support_fini(&support);
+  
+  // Free allocated memory
+  if (motor_rpm_msg.data.data != NULL) {
+    free(motor_rpm_msg.data.data);
+    motor_rpm_msg.data.data = NULL;
+  }
 }
 
 void setup() {
@@ -370,8 +371,6 @@ void loop() {
       break;
   }
   
-
-  // testMotorControl();
   if (car_initialized) {
     car.updateControlLoops();
   }
