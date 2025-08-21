@@ -281,6 +281,8 @@ void Car::setSpeed(float rpm, float wheelbase, float trackWidth) {
   float v_R = rpm * (R_R / R);
 
   rightMotor.setSpeed(v_R);
+
+  // left motor requires opposite rotation of right motor due to mirroring on car
   leftMotor.setSpeed(-v_L);
   unlock();
 }
