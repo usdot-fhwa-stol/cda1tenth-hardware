@@ -36,28 +36,35 @@
 #define STEERING_KP 400.0f
 #define STEERING_MAX_SPEED 12000.0f
 #define STEERING_ERROR_THRESHOLD 5.0f
-#define STEERING_CURRENT_UPDATE_INTERVAL 5000  // microseconds
+#define STEERING_CORRECTION_INTERVAL 50000  // 50 ms
+#define STEERING_GEAR_RATIO (55.0f/12.0f) // ≈ 4.5833
+#define STEERING_MAX_ALLOWED_ERROR 2.0f
+#define STALL_DETECTION_COUNT 10 // ~500 ms
+#define SMALL_MOVEMENT_THRESHOLD 0.5f // degrees
 
 // Drive motor control parameters
 #define DRIVE_ERROR_GAIN 0.1f
 #define DRIVE_STALL_THRESHOLD 0.5f
 #define DRIVE_STALL_REDUCTION 250
 #define DRIVE_MAX_STALL_COUNT 5
+#define MAX_STEP_ACCEL 200.0f
 
 class SteeringMotor {
 public:
   TMC5160Stepper driver;
   int cs_pin;
-  float angleOffset = 160.0f;
+  float angleOffset = 187.5f;
   float targetAngle = 0.0f;
   int32_t targetSpeed = 0;
   int32_t lastAppliedSpeed = INT32_MIN;
-  uint32_t lastApplyMicros = 0;
-  uint32_t lastCurrentUpdateMicros = 0;
-
+  uint32_t lastCorrectionMicros = 0;
+  float lastExternalAngle = 0.0f;
+  int stallCounter = 0;
+  
   SteeringMotor(int cs);
   void begin();
   void setSpeed(int32_t speed);
+  void setTargetAngle(float angle);
   float getSteeringAngle();
   void updatePosition();
   void applySpeed();
@@ -74,6 +81,7 @@ public:
   uint32_t last_time = 0;
   int stall_counter = 0;
   float current_rpm = 0.0f;
+  float target_rpm = 0.0f;
 
   DriveMotor(int cs);
   void begin();

@@ -50,12 +50,11 @@ float g_wheelbase = 0.185f;
 float g_track_width = 0.15f; 
 
 // Desmos link: https://www.desmos.com/calculator/hzw38ukeor
-float g_steering_scaling_factor = 0.87f; // Scaling factor for encoder angle to wheel steering angle
-float o_speed_scaling_factor = 1.0f; // Factor to scale the speed command
+float g_steering_scaling_factor = (1.0f/0.87f); // Scaling factor for encoder angle to wheel steering angle
+float o_speed_scaling_factor = 4.0f; // Factor to scale the speed command
 
 // Steering control constants
-const float MIN_SPEED_THRESHOLD = 0.1f; // m/s - minimum speed for bicycle model
-const float LOW_SPEED_STEERING_SCALE = 0.5f; // Reduced scaling for low speed steering
+const float MAX_STEERING_ANGLE = 45.0f; // degrees
 
 // Car control instance
 Car car(CS_RIGHT, CS_LEFT, CS_STEER);
@@ -104,50 +103,37 @@ void motor_rpm_timer_callback(rcl_timer_t * timer, int64_t last_call_time)
   }
 }
 
+float getSteeringAngle(float omega, float vel) {
+  if (omega == 0.0f || vel == 0.0f) {
+    return 0.0f;
+  }
+
+  // Remove negative so steering doesn't reverse when reversing.
+  vel = fabsf(vel);
+
+  float rad = vel / omega;
+  float steering_angle_rad = atan(g_wheelbase / rad);
+  // Convert steering angle from radians to degrees
+  float steering_angle_deg = steering_angle_rad * 180.0f / M_PI;
+
+  steering_angle_deg *= g_steering_scaling_factor;
+
+  if (steering_angle_deg > MAX_STEERING_ANGLE) steering_angle_deg = MAX_STEERING_ANGLE;
+  if (steering_angle_deg < -MAX_STEERING_ANGLE) steering_angle_deg = -MAX_STEERING_ANGLE;
+
+  return steering_angle_deg;
+}
+
 void twist_callback(const void * msgin) {
   const auto * twist = static_cast<const geometry_msgs__msg__Twist *>(msgin);
   
   // Use bicycle model for proper steering angle calculation
-  float steering_angle_rad = 0.0f;
-  
-  if (fabsf(twist->linear.x) > MIN_SPEED_THRESHOLD) {
-    // Calculate steering angle using bicycle model: δ = atan2(L * ω, v)
-    steering_angle_rad = atan2f(twist->angular.z * g_wheelbase, twist->linear.x) * g_steering_scaling_factor;
-  } else {
-    // At very low speeds, use a simplified approach to avoid division by zero
-    steering_angle_rad = twist->angular.z * g_steering_scaling_factor * LOW_SPEED_STEERING_SCALE;
-  }
-
-  float max_steering_angle = 0.45f * g_steering_scaling_factor; // ~30 degrees in radians
-
-  // Apply steering limits (assuming max 30 degrees each way)
-  if (steering_angle_rad > max_steering_angle) steering_angle_rad = max_steering_angle;
-  if (steering_angle_rad < -max_steering_angle) steering_angle_rad = -max_steering_angle;
-  
-  // Convert steering angle from radians to degrees
-  float steering_angle_deg = steering_angle_rad * 180.0f / M_PI;
-  
-  // Convert speed from m/s to RPM (approximate conversion)
-  // Assuming wheel diameter of 0.06m and gear ratio
+  float steering_angle_deg = getSteeringAngle(twist->angular.z, twist->linear.x);
   float speed_rpm = twist->linear.x * o_speed_scaling_factor * 60.0f / (M_PI * 0.06f);
-
-  // Apply speed limits
-  if (speed_rpm > 500.0f) speed_rpm = 500.0f;
-  if (speed_rpm < -500.0f) speed_rpm = -500.0f;
   
   // Update car control
   car.setSteeringAngle(steering_angle_deg);
   car.setSpeed(speed_rpm, g_wheelbase, g_track_width);
-  
-  // geometry_msgs__msg__Twist out;
-  // geometry_msgs__msg__Twist__init(&out);
-  // out.linear.x  = twist->linear.x;
-  // out.linear.y  = twist->linear.y;
-  // out.linear.z  = twist->linear.z;
-  // out.angular.x = twist->angular.x;
-  // out.angular.y = twist->angular.y;
-  // out.angular.z = twist->angular.z;
-  // rcl_publish(&twist_publisher, &out, nullptr);
 }
 
 // Callback function for the vehicle geometry subscriber
@@ -185,17 +171,17 @@ void vehicle_geometry_callback(const void * msgin)
     constexpr size_t N = sizeof(poses) / sizeof(poses[0]);
     for (size_t i = 0; i < N; ++i) {
       const auto & p = *poses[i];
-      USBSerial.printf(
-        "%s — pos:(%.2f, %.2f, %.2f) ori:(%.2f, %.2f, %.2f, %.2f)\n",
-        labels[i],
-        p.position.x,
-        p.position.y,
-        p.position.z,
-        p.orientation.x,
-        p.orientation.y,
-        p.orientation.z,
-        p.orientation.w
-      );
+      // USBSerial.printf(
+      //   "%s — pos:(%.2f, %.2f, %.2f) ori:(%.2f, %.2f, %.2f, %.2f)\n",
+      //   labels[i],
+      //   p.position.x,
+      //   p.position.y,
+      //   p.position.z,
+      //   p.orientation.x,
+      //   p.orientation.y,
+      //   p.orientation.z,
+      //   p.orientation.w
+      // );
     }
     last_log_ms = now_ms;
   }
@@ -276,9 +262,6 @@ bool create_entities()
     &twist_callback, ON_NEW_DATA));
   // Ensure spin_some returns promptly to keep the loop responsive
   rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(2));
-  
-  // Initialize the car control system
-  initializeCar();
 
   return true;
 }
@@ -288,7 +271,6 @@ void destroy_entities()
   if (car_initialized) {
     car.setSpeed(0.0f, g_wheelbase, g_track_width); // Start with zero speed
     car.setSteeringAngle(0.0f); // Start with zero steering angle
-    car_initialized = false;
   }
 
   rmw_context_t * rmw_context = rcl_context_get_rmw_context(&support.context);
@@ -310,6 +292,9 @@ void destroy_entities()
 }
 
 void setup() {
+  // Initialize the car control system
+  initializeCar();
+
   // Initialize USB CDC
   USB.begin();
   USBSerial.begin(921600);
@@ -325,7 +310,7 @@ void setup() {
   set_microros_serial_transports(USBSerial);
 
   state = WAITING_AGENT;  
-  msg.data = 0;
+  // motor_rpm_msg.data = 0;
   
   // Initialize motor RPM message
   motor_rpm_msg.data.size = 3;
@@ -333,31 +318,32 @@ void setup() {
   motor_rpm_msg.data.data = (float*)malloc(3 * sizeof(float));
 }
 
-// float angle = 25.00f;
-// uint32_t lastApplyMicros = micros();
+float angle = 45.00f;
+uint32_t lastApplyMicros = micros();
 
-// void testMotorControl() {
-//   initializeCar();
+void testMotorControl() {
+  initializeCar();
 
-//   float steering_angle = car.steeringMotor.getSteeringAngle();
+  float steering_angle = car.steeringMotor.getSteeringAngle();
 
-//   // Set initial speed and angle
-//   car.setSpeed(200.0f, g_wheelbase, g_track_width);
+  // Set initial speed and angle
+  car.setSpeed(200.0f, g_wheelbase, g_track_width);
 
-//   const uint32_t now = micros();
-//   const bool timeElapsed = (now - lastApplyMicros) / 1000 >= 2000;
+  USBSerial.println("Time Elapsed");
+  USBSerial.println(steering_angle);
+  delay(50);
 
-//   if (!timeElapsed) {
-//     return;
-//   }
-//   lastApplyMicros = now;
-//   USBSerial.println("Time Elapsed");
-//   USBSerial.println(steering_angle);
+  const uint32_t now = micros();
+  const bool timeElapsed = (now - lastApplyMicros) / 1000 >= 2000;
 
-//   car.setSteeringAngle(angle);
-//   angle = -angle;
-//   USBSerial.println(angle);
-// }
+  if (!timeElapsed) {
+    return;
+  }
+  lastApplyMicros = now;
+  car.setSteeringAngle(angle);
+  angle = -angle;
+  USBSerial.println(angle);
+}
 
 
 void loop() {
@@ -374,7 +360,7 @@ void loop() {
     case AGENT_CONNECTED:
       EXECUTE_EVERY_N_MS(200, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
       if (state == AGENT_CONNECTED) {
-        rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
+        rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
       }
       break;
     case AGENT_DISCONNECTED:
@@ -388,4 +374,5 @@ void loop() {
   if (car_initialized) {
     car.updateControlLoops();
   }
+  // testMotorControl();
 }
