@@ -19,6 +19,9 @@
 #include <geometry_msg/msg/vehicle_geometry.h>
 #include <geometry_msgs/msg/twist.h>
 #include <std_msgs/msg/float32_multi_array.h>
+#include <math.h>
+#include <nav_msgs/msg/odometry.h>
+#include <rosidl_runtime_c/string_functions.h>
 
 // Include car control logic
 #include "car.h"
@@ -45,6 +48,12 @@ std_msgs__msg__Float32MultiArray motor_rpm_msg;
 rcl_subscription_t geom_subscriber;
 geometry_msg__msg__VehicleGeometry geom_msg;
 geometry_msgs__msg__Twist twist_msg;
+
+rcl_subscription_t odom_subscriber;
+nav_msgs__msg__Odometry odom_msg_storage;   // storage passed to executor
+void odom_callback(const void * msgin); 
+
+static float g_odom_x = 0.f, g_odom_y = 0.f, g_odom_yaw = 0.f;
 
 float g_wheelbase = 0.185f;
 float g_track_width = 0.15f; 
@@ -107,21 +116,45 @@ float getSteeringAngle(float omega, float vel) {
   if (omega == 0.0f || vel == 0.0f) {
     return 0.0f;
   }
+}
 
-  // Remove negative so steering doesn't reverse when reversing.
-  vel = fabsf(vel);
+void odom_callback(const void * msgin)
+{
+  const nav_msgs__msg__Odometry *odom =
+      static_cast<const nav_msgs__msg__Odometry *>(msgin);
 
-  float rad = vel / omega;
-  float steering_angle_rad = atan(g_wheelbase / rad);
-  // Convert steering angle from radians to degrees
-  float steering_angle_deg = steering_angle_rad * 180.0f / M_PI;
+  // Position
+  g_odom_x = (float)odom->pose.pose.position.x;
+  g_odom_y = (float)odom->pose.pose.position.y;
 
-  steering_angle_deg *= g_steering_scaling_factor;
+  // Yaw from quaternion (robust general formula)
+  const float qx = odom->pose.pose.orientation.x;
+  const float qy = odom->pose.pose.orientation.y;
+  const float qz = odom->pose.pose.orientation.z;
+  const float qw = odom->pose.pose.orientation.w;
+  const float siny_cosp = 2.0f * (qw * qz + qx * qy);
+  const float cosy_cosp = 1.0f - 2.0f * (qy * qy + qz * qz);
+  g_odom_yaw = atan2f(siny_cosp, cosy_cosp);
 
-  if (steering_angle_deg > MAX_STEERING_ANGLE) steering_angle_deg = MAX_STEERING_ANGLE;
-  if (steering_angle_deg < -MAX_STEERING_ANGLE) steering_angle_deg = -MAX_STEERING_ANGLE;
+  // Throttled printing to avoid blocking the executor/USB
+  static uint32_t last_log_ms = 0;
+  const uint32_t now_ms = uxr_millis();
+  if (now_ms - last_log_ms >= 250) {  // ~4 Hz
+    const float v  = (float)odom->twist.twist.linear.x;
+    const float wz = (float)odom->twist.twist.angular.z;
 
-  return steering_angle_deg;
+    // frame ids are rosidl_runtime_c strings; guard for null
+    const char *frame_id  = odom->header.frame_id.data  ? odom->header.frame_id.data  : "";
+    const char *child_id  = odom->child_frame_id.data   ? odom->child_frame_id.data   : "";
+
+    USBSerial.printf(
+      "ODOM | frame:%s child:%s | pos:(%.2f, %.2f) yaw:%.2f | v:%.2f ang:%.2f\n",
+      frame_id, child_id,
+      g_odom_x, g_odom_y, g_odom_yaw,
+      v, wz
+    );
+    last_log_ms = now_ms;
+  }
 }
 
 void twist_callback(const void * msgin) {
@@ -249,9 +282,17 @@ bool create_entities()
     RCL_MS_TO_NS(motor_rpm_timer_timeout),
     motor_rpm_timer_callback));
 
+  RCCHECK(rclc_subscription_init_best_effort(
+    &odom_subscriber,
+    &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
+    "odom"));  // change if your topic name differs
+
+  // Initialize storage for executor
+  nav_msgs__msg__Odometry__init(&odom_msg_storage);
 
   // num handles = total_of_subscribers + timers (publisher is not counted)
-  unsigned int number_of_handles = 3;
+  unsigned int number_of_handles = 4;
   executor = rclc_executor_get_zero_initialized_executor();
   RCCHECK(rclc_executor_init(&executor, &support.context, number_of_handles, &allocator));
   RCCHECK(rclc_executor_add_timer(&executor, &motor_rpm_timer));
@@ -260,6 +301,9 @@ bool create_entities()
   RCCHECK(rclc_executor_add_subscription(
     &executor, &twist_subscriber, &twist_msg,
     &twist_callback, ON_NEW_DATA));
+  RCCHECK(rclc_executor_add_subscription(
+    &executor, &odom_subscriber, &odom_msg_storage,
+    &odom_callback, ON_NEW_DATA));
   // Ensure spin_some returns promptly to keep the loop responsive
   rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(2));
 
@@ -277,12 +321,15 @@ void destroy_entities()
   (void) rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
 
   rcl_publisher_fini(&motor_rpm_publisher, &node);
+  rcl_subscription_fini(&odom_subscriber, &node);
   rcl_subscription_fini(&geom_subscriber, &node);
   rcl_subscription_fini(&twist_subscriber, &node);
   rcl_timer_fini(&motor_rpm_timer);
   rclc_executor_fini(&executor);
   rcl_node_fini(&node);
   rclc_support_fini(&support);
+
+  nav_msgs__msg__Odometry__fini(&odom_msg_storage);
   
   // Free allocated memory
   if (motor_rpm_msg.data.data != NULL) {
