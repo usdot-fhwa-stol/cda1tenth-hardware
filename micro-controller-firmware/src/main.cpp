@@ -18,6 +18,7 @@
 #include "ros_comm_task.h"
 #include "system_init.h"
 #include "ros_logger.h"
+#include "web_debug_server.h"
 
 // Declare USBSerial object
 USBCDC USBSerial;
@@ -37,6 +38,10 @@ void setup() {
   
   // Log successful initialization via ROS logger
   ROS_LOG_INFO("MAIN", "System initialization completed successfully");
+  
+  // Log to web debug server
+  webDebugServer.logInfo("MAIN", "System initialization completed successfully");
+  webDebugServer.updateSystemStatus("System initialized and running");
 }
 
 // Legacy testMotorControl function removed
@@ -45,7 +50,30 @@ void setup() {
 void loop() {
   // Main loop now just monitors system health and provides status updates
   static uint32_t lastStatusUpdate = 0;
+  static uint32_t lastWebUpdate = 0;
   uint32_t currentTime = millis();
+  
+  // Update web debug server every 2 seconds
+  if (currentTime - lastWebUpdate >= 2000) {
+    // Update performance metrics for web interface
+    ROSCommTask* rosTask = getROSCommTask();
+    MultiCoreCar* motorCar = getMultiCoreCar();
+    
+    String perfMetrics = "Uptime: " + String(millis() / 1000) + "s";
+    if (rosTask != nullptr && rosTask->isRunning()) {
+      ROSCommPerformanceMetrics rosMetrics = rosTask->getPerformanceMetrics();
+      perfMetrics += " | ROS Executions: " + String(rosMetrics.execution_count);
+      perfMetrics += " | ROS Failures: " + String(rosMetrics.ros_message_send_failures);
+    }
+    if (motorCar != nullptr) {
+      MotorControlPerformanceMetrics motorMetrics = motorCar->getPerformanceMetrics();
+      perfMetrics += " | Motor Executions: " + String(motorMetrics.execution_count);
+      perfMetrics += " | Motor Errors: " + String(motorMetrics.spi_errors);
+    }
+    
+    webDebugServer.updatePerformanceMetrics(perfMetrics);
+    lastWebUpdate = currentTime;
+  }
   
   // Print detailed status every 10 seconds
   if (currentTime - lastStatusUpdate >= 10000) {

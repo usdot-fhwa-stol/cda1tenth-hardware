@@ -12,6 +12,12 @@
 #define NEOPIXEL_PIN 48  // WS2812 NeoPixel RGB LED pin
 #define NEOPIXEL_COUNT 1  // Number of NeoPixels
 
+// WiFi and Web Server Configuration
+#define WIFI_SSID "ESP32-Debug"  // WiFi access point name
+#define WIFI_PASSWORD "debug123"  // WiFi password
+#define WEB_SERVER_PORT 80  // Web server port
+#define MAX_LOG_ENTRIES 100  // Maximum number of log entries to store
+
 // Task priorities (higher number = higher priority)
 #define MOTOR_CONTROL_TASK_PRIORITY     24
 #define ROS_COMM_TASK_PRIORITY          10

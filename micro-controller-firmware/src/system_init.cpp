@@ -4,6 +4,7 @@
 #include <micro_ros_platformio.h>
 #include <stdio.h>
 #include "neopixel_led.h"
+#include "web_debug_server.h"
 
 // External USB Serial declaration
 extern USBCDC USBSerial;
@@ -128,6 +129,22 @@ bool SystemInitializer::initializeUSB() {
     }
     statusLED.showUSBInit(); // Blue LED = USB init starting
     
+    // Initialize web debug server
+    if (!webDebugServer.initialize()) {
+        errorHandler.handleError("Failed to initialize web debug server");
+        return false;
+    }
+    
+    // Start WiFi access point
+    webDebugServer.startWiFiAP();
+    
+    // Start web server
+    webDebugServer.startServer();
+    
+    // Log initial status
+    webDebugServer.logInfo("SYSTEM", "Web debug server initialized");
+    webDebugServer.updateSystemStatus("USB initialization starting...");
+    
     // Initialize USB CDC
     USB.begin();
     
@@ -145,6 +162,8 @@ bool SystemInitializer::initializeUSB() {
     
     if (!USBSerial) {
         statusLED.showUSBError(); // Red LED = USB failed
+        webDebugServer.logError("USB", "USB CDC not ready after timeout");
+        webDebugServer.updateSystemStatus("USB initialization failed");
         errorHandler.handleError("USB CDC not ready after timeout");
         return false;
     }
@@ -161,6 +180,10 @@ bool SystemInitializer::initializeUSB() {
     
     // LED sequence = USB ready, micro-ROS transport configured
     statusLED.showUSBReady();
+    
+    // Update web debug status
+    webDebugServer.logInfo("USB", "USB CDC initialized successfully");
+    webDebugServer.updateSystemStatus("USB ready, micro-ROS transport configured");
     
     usbInitialized = true;
     

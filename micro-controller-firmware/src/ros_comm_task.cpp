@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdio.h>
 #include "neopixel_led.h"
+#include "web_debug_server.h"
 
 // Static instance pointer for callbacks
 ROSCommTask* ROSCommTask::instance = nullptr;
@@ -322,10 +323,12 @@ void ROSCommTask::handleAgentConnection() {
         case WAITING_AGENT:
             // Blue slow blink = waiting for agent
             statusLED.showWaitingForAgent();
+            webDebugServer.updateROSStatus("Waiting for micro-ROS agent...");
             
             if (currentTime - lastAgentPingTime >= config.agent_ping_interval_ms) {
                 if (pingAgent()) {
                     agentState = AGENT_AVAILABLE;
+                    webDebugServer.logInfo("ROS", "Micro-ROS agent found");
                 }
                 lastAgentPingTime = currentTime;
             }
@@ -334,24 +337,29 @@ void ROSCommTask::handleAgentConnection() {
         case AGENT_AVAILABLE:
             // Yellow fast blink = agent found, creating entities
             statusLED.showAgentFound();
+            webDebugServer.updateROSStatus("Creating ROS entities...");
             
             if (createROS2Entities()) {
                 agentState = AGENT_CONNECTED;
                 reconnectionAttempts = 0;
+                webDebugServer.logInfo("ROS", "ROS entities created successfully");
             } else {
                 agentState = WAITING_AGENT;
                 performance.agent_reconnection_attempts++;
+                webDebugServer.logError("ROS", "Failed to create ROS entities");
             }
             break;
             
         case AGENT_CONNECTED:
             // Green solid = connected
             statusLED.showConnected();
+            webDebugServer.updateROSStatus("Connected to micro-ROS agent");
             
             if (currentTime - lastAgentPingTime >= config.agent_ping_interval_ms) {
                 if (!pingAgent()) {
                     agentState = AGENT_DISCONNECTED;
                     performance.ros_connection_drops++;
+                    webDebugServer.logWarning("ROS", "Connection to agent lost");
                 }
                 lastAgentPingTime = currentTime;
             }
@@ -360,6 +368,7 @@ void ROSCommTask::handleAgentConnection() {
         case AGENT_DISCONNECTED:
             // LED off = disconnected
             statusLED.showDisconnected();
+            webDebugServer.updateROSStatus("Disconnected from micro-ROS agent");
             destroyROS2Entities();
             agentState = WAITING_AGENT;
             break;
