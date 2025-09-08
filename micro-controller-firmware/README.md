@@ -1,3 +1,7 @@
+## Install PIO
+
+Install PIO CORE CLI using provided attached [instructions](https://docs.platformio.org/en/latest/core/installation/methods/installer-script.html#id1).
+
 ## Building and Running
 
 1. Build the project:

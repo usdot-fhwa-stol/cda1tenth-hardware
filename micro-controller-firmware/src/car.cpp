@@ -239,79 +239,354 @@ float DriveMotor::getCurrentRPM() {
   return current_rpm;
 }
 
-Car::Car(int rightCS, int leftCS, int steerCS)
-  : rightMotor(rightCS), leftMotor(leftCS), steeringMotor(steerCS) {
-    carMutex = xSemaphoreCreateMutex();
+// Legacy Car class removed - using MultiCoreCar instead
+
+// =============================================================================
+// MOTOR CONTROL TASK IMPLEMENTATION
+// =============================================================================
+
+MotorControlTask::MotorControlTask() 
+  : TaskInitializable("MotorControlTask"),
+    rightMotor(nullptr), leftMotor(nullptr), steeringMotor(nullptr), carState(nullptr),
+    taskHandle(nullptr), lastWakeTime(0), taskPeriodTicks(pdMS_TO_TICKS(1)) { // 1ms = 1kHz
+  
+  // Initialize performance metrics
+  performance.init();
+}
+
+MotorControlTask::~MotorControlTask() {
+  cleanup();
+}
+
+bool MotorControlTask::initialize(DriveMotor* rightMotor, DriveMotor* leftMotor, 
+                                 SteeringMotor* steeringMotor, ThreadSafeCarState* carState,
+                                 const SystemConfig_t& config) {
+  // Store references
+  this->rightMotor = rightMotor;
+  this->leftMotor = leftMotor;
+  this->steeringMotor = steeringMotor;
+  this->carState = carState;
+  this->config = config;
+  
+  // Use base class initialization
+  return Initializable::initialize();
+}
+
+void MotorControlTask::cleanup() {
+  Initializable::cleanup();
+}
+
+// Virtual method implementations from TaskInitializable
+bool MotorControlTask::doInitialize() {
+  // SPI mutex is already created in constructor via SpiMutex
+  return true;
+}
+
+void MotorControlTask::doCleanup() {
+  stopTask();
+}
+
+bool MotorControlTask::doHealthCheck() const {
+  return isTaskHealthy();
+}
+
+bool MotorControlTask::createTask() {
+  // Create the task
+  BaseType_t result = xTaskCreatePinnedToCore(
+    staticTaskFunction,
+    "MotorControlTask",
+    config.motor_task_stack_size,
+    this,
+    config.motor_task_priority,
+    &taskHandle,
+    config.motor_task_core_id
+  );
+  
+  if (result != pdPASS) {
+    return false;
   }
-
-void Car::lock() {
-  xSemaphoreTake(carMutex, portMAX_DELAY);
+  
+  lastWakeTime = xTaskGetTickCount();
+  return true;
 }
 
-void Car::unlock() {
-  xSemaphoreGive(carMutex);
+void MotorControlTask::destroyTask() {
+  if (taskHandle != nullptr) {
+    vTaskDelete(taskHandle);
+    taskHandle = nullptr;
+  }
 }
 
-void Car::updateControlLoops() {
-  lock();
-  rightMotor.updateControlLoop();
-  leftMotor.updateControlLoop();
-  steeringMotor.updatePosition();
-  unlock();
+void MotorControlTask::taskFunction() {
+  // Initialize timing
+  lastWakeTime = xTaskGetTickCount();
+  
+  while (isTaskRunning()) {
+    uint32_t startTime = TimeUtils::getCurrentTimestampUs();
+    
+    // Execute control loop
+    executeControlLoop();
+    
+    uint32_t executionTime = TimeUtils::getCurrentTimestampUs() - startTime;
+    performance.update(executionTime);
+    
+    // Check for deadline miss
+    if (isDeadlineMissed()) {
+      performance.missed_deadlines++;
+      taskErrorHandler.handleError("Task deadline missed");
+    }
+    
+    // Wait for next period
+    vTaskDelayUntil(&lastWakeTime, taskPeriodTicks);
+  }
 }
 
-void Car::begin() {
+bool MotorControlTask::startTask() {
+  return TaskInitializable::startTask();
+}
+
+void MotorControlTask::stopTask() {
+  TaskInitializable::stopTask();
+}
+
+bool MotorControlTask::isRunning() {
+  return isTaskRunning();
+}
+
+
+void MotorControlTask::executeControlLoop() {
+  // Process incoming commands
+  processMotorCommands();
+  
+  // Update motor control loops
+  updateMotorControlLoops();
+  
+  // Report status (less frequently than control loop)
+  static uint32_t lastStatusReport = 0;
+  uint32_t currentTime = TimeUtils::getCurrentTimestampUs();
+  if (currentTime - lastStatusReport >= 50000) { // 50ms
+    reportMotorStatus();
+    lastStatusReport = currentTime;
+  }
+}
+
+void MotorControlTask::processMotorCommands() {
+  if (carState == nullptr) return;
+  
+  MotorCommand_t cmd;
+  if (carState->receiveCommandFromQueue(cmd, 0)) { // Non-blocking
+    if (MotorValidation::validateMotorCommand(cmd)) {
+      // Apply steering command
+      MUTEX_LOCK(spiMutex);
+      if (spiMutex.isTaken()) {
+        steeringMotor->setTargetAngle(cmd.steering_angle);
+      }
+      
+      // Apply speed command with differential drive calculation
+      float speed_rpm = cmd.drive_speed * 60.0f / (M_PI * 0.06f); // Convert m/s to RPM
+      const float steeringAngleRad = cmd.steering_angle * (M_PI / 180.0f);
+      constexpr float minTurnAngle = 0.01f; // radians
+      
+      if (spiMutex.take()) {
+        if (fabsf(steeringAngleRad) < minTurnAngle) {
+          // Straight line motion
+          rightMotor->setSpeed(speed_rpm);
+          leftMotor->setSpeed(-speed_rpm);
+        } else {
+          // Differential drive calculation
+          float R = cmd.wheelbase / tanf(steeringAngleRad);
+          float R_L = R - (cmd.track_width / 2.0f);
+          float R_R = R + (cmd.track_width / 2.0f);
+          
+          float v_L = speed_rpm * (R_L / R);
+          float v_R = speed_rpm * (R_R / R);
+          
+          rightMotor->setSpeed(v_R);
+          leftMotor->setSpeed(-v_L); // Left motor requires opposite rotation
+        }
+        spiMutex.give();
+      }
+    } else {
+      taskErrorHandler.handleError("Invalid motor command received");
+    }
+  }
+}
+
+void MotorControlTask::updateMotorControlLoops() {
+  if (spiMutex.take()) {
+    rightMotor->updateControlLoop();
+    leftMotor->updateControlLoop();
+    steeringMotor->updatePosition();
+    spiMutex.give();
+  } else {
+    performance.spi_errors++;
+    taskErrorHandler.handleError("Mutex timeout");
+  }
+}
+
+void MotorControlTask::reportMotorStatus() {
+  if (carState == nullptr) return;
+  
+  MotorStatus_t status;
+  motor_status_init(&status);
+  
+  if (spiMutex.take()) {
+    status.right_motor_rpm = rightMotor->getCurrentRPM();
+    status.left_motor_rpm = leftMotor->getCurrentRPM();
+    status.steering_angle = steeringMotor->getSteeringAngle();
+    status.steering_position = analogRead(STEERING_SENSOR_PIN);
+    spiMutex.give();
+  }
+  
+  status.timestamp = TimeUtils::getCurrentTimestampUs();
+  status.motor_control_active = isHealthy();
+  status.sequence_id = (status.sequence_id + 1) % 256;
+  
+  // Send status to queue
+  if (!carState->sendStatusToQueue(status)) {
+    performance.queue_overruns++;
+    taskErrorHandler.handleError("Queue overflow");
+  }
+}
+
+bool MotorControlTask::isDeadlineMissed() {
+  TickType_t currentTime = xTaskGetTickCount();
+  return (currentTime - lastWakeTime) > taskPeriodTicks;
+}
+
+MotorControlPerformanceMetrics MotorControlTask::getPerformanceMetrics() {
+  return performance;
+}
+
+void MotorControlTask::resetPerformanceMetrics() {
+  performance.reset();
+}
+
+bool MotorControlTask::isHealthy() const {
+  return TaskInitializable::isHealthy();
+}
+
+uint32_t MotorControlTask::getErrorCount() {
+  return taskErrorHandler.getErrorCount();
+}
+
+// =============================================================================
+// MULTI-CORE COMPATIBLE CAR CLASS IMPLEMENTATION
+// =============================================================================
+
+MultiCoreCar::MultiCoreCar(int rightCS, int leftCS, int steerCS)
+  : Initializable("MultiCoreCar"),
+    rightMotor(rightCS), leftMotor(leftCS), steeringMotor(steerCS),
+    carState(nullptr) {
+  systemConfig = DEFAULT_SYSTEM_CONFIG;
+}
+
+MultiCoreCar::~MultiCoreCar() {
+  cleanup();
+}
+
+bool MultiCoreCar::initialize() {
+  // Get reference to inter-core communication
+  carState = &InterCoreCommunication::getInstance().getCarState();
+  
+  // Use base class initialization
+  return Initializable::initialize();
+}
+
+void MultiCoreCar::cleanup() {
+  Initializable::cleanup();
+}
+
+// Virtual method implementations from Initializable
+bool MultiCoreCar::doInitialize() {
+  // Initialize motors
+  if (!initializeMotors()) {
+    return false;
+  }
+  
+  // Initialize motor control task
+  if (!motorControlTask.initialize(&rightMotor, &leftMotor, &steeringMotor, carState, systemConfig)) {
+    return false;
+  }
+  
+  // Start motor control task
+  if (!motorControlTask.startTask()) {
+    return false;
+  }
+  
+  return true;
+}
+
+void MultiCoreCar::doCleanup() {
+  // Stop motor control task
+  motorControlTask.stopTask();
+  motorControlTask.cleanup();
+  
+  // Clean up motors
+  cleanupMotors();
+}
+
+bool MultiCoreCar::doHealthCheck() const {
+  return motorControlTask.isHealthy();
+}
+
+// Motor control task is now handled by MotorControlTask class
+
+bool MultiCoreCar::getCurrentStatus(MotorStatus_t& status) {
+  if (!isInitialized() || carState == nullptr) {
+    return false;
+  }
+  
+  return carState->getStatus(status);
+}
+
+bool MultiCoreCar::isHealthy() {
+  return Initializable::isHealthy();
+}
+
+void MultiCoreCar::setSystemConfig(const SystemConfig_t& config) {
+  systemConfig = config;
+}
+
+MotorControlPerformanceMetrics MultiCoreCar::getPerformanceMetrics() {
+  return motorControlTask.getPerformanceMetrics();
+}
+
+bool MultiCoreCar::initializeMotors() {
+  if (!spiMutex.take(pdMS_TO_TICKS(1000))) {
+    return false;
+  }
+  
+  bool success = true;
+  
+  // Initialize SPI for motor drivers
+  SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN);
+  delay(100);
+  
+  // Initialize motors
   rightMotor.begin();
   leftMotor.begin();
   steeringMotor.begin();
+  
+  // Set initial values
+  rightMotor.setSpeed(0.0f);
+  leftMotor.setSpeed(0.0f);
+  steeringMotor.setTargetAngle(0.0f);
+  
+  spiMutex.give();
+  return success;
 }
 
-void Car::setSteeringAngle(float angle) {
-  lock();
-  steeringAngle = angle;
-  steeringMotor.setTargetAngle(angle);
-  unlock();
-}
-
-void Car::setSpeed(float rpm, float wheelbase, float trackWidth) {
-  lock();
-  speed = rpm;
-
-  // steeringAngle is stored in degrees in this class; convert to radians for trig
-  const float steeringAngleRad = steeringAngle * (M_PI / 180.0f);
-  constexpr float minTurnAngle = 0.01f; // radians
-
-  if (fabsf(steeringAngleRad) < minTurnAngle) {
-    rightMotor.setSpeed(rpm);
-    leftMotor.setSpeed(-rpm);
-    unlock();
-    return;
+void MultiCoreCar::cleanupMotors() {
+  if (spiMutex.take(pdMS_TO_TICKS(1000))) {
+    // Stop all motors
+    rightMotor.setSpeed(0.0f);
+    leftMotor.setSpeed(0.0f);
+    steeringMotor.setTargetAngle(0.0f);
+    
+    spiMutex.give();
   }
-
-  float R = wheelbase / tanf(steeringAngleRad);
-  float R_L = R - (trackWidth / 2.0f);
-  float R_R = R + (trackWidth / 2.0f);
-
-  float v_L = rpm * (R_L / R);
-  float v_R = rpm * (R_R / R);
-
-  rightMotor.setSpeed(v_R);
-
-  // left motor requires opposite rotation of right motor due to mirroring on car
-  leftMotor.setSpeed(-v_L);
-  unlock();
 }
 
-float Car::getRightMotorRPM() {
-  lock();
-  float rightRPM = rightMotor.getCurrentRPM();
-  unlock();
-  return rightRPM;
-}
-
-float Car::getLeftMotorRPM() {
-  lock();
-  float leftRPM = leftMotor.getCurrentRPM();
-  unlock();
-  return leftRPM;
-}
+// All motor control methods are now handled by MotorControlTask class
+// All motor control methods are now handled by MotorControlTask class

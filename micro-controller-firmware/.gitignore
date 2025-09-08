@@ -55,3 +55,4 @@ node_modules/
 # Backup files
 *.bak
 *.backup
+compile_commands.json

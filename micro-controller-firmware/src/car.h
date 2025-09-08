@@ -8,6 +8,14 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include <limits.h>
+#include "inter_core_comm.h"
+#include "system_config.h"
+#include "task_performance.h"
+#include "mutex_wrapper.h"
+#include "time_utils.h"
+#include "validation_utils.h"
+#include "error_handler.h"
+#include "initializable.h"
 
 // SPI pin definitions
 #define CS_STEER    41
@@ -90,26 +98,127 @@ public:
   float getCurrentRPM();
 };
 
-class Car {
+// =============================================================================
+// MOTOR CONTROL TASK CLASS
+// =============================================================================
+
+class MotorControlTask : public TaskInitializable {
 public:
-  float speed = 0.0f;
-  float steeringAngle = 0.0f;
+    // Constructor and destructor
+    MotorControlTask();
+    ~MotorControlTask();
+    
+    // Initialization and cleanup
+    bool initialize(DriveMotor* rightMotor, DriveMotor* leftMotor, SteeringMotor* steeringMotor,
+                   ThreadSafeCarState* carState, const SystemConfig_t& config);
+    void cleanup();
+    
+    // Task management
+    bool startTask();
+    void stopTask();
+    bool isRunning();
+    
+    // Performance monitoring
+    MotorControlPerformanceMetrics getPerformanceMetrics();
+    void resetPerformanceMetrics();
+    
+    // Health monitoring
+    bool isHealthy() const;
+    uint32_t getErrorCount();
+    
+protected:
+    // Virtual method implementations from TaskInitializable
+    virtual bool doInitialize() override;
+    virtual void doCleanup() override;
+    virtual bool doHealthCheck() const override;
+    virtual bool createTask() override;
+    virtual void destroyTask() override;
+    virtual void taskFunction() override;
+    
+private:
+    // Motor references
+    DriveMotor* rightMotor;
+    DriveMotor* leftMotor;
+    SteeringMotor* steeringMotor;
+    ThreadSafeCarState* carState;
+    
+    // Task management
+    TaskHandle_t taskHandle;
+    
+    // Timing control
+    TickType_t lastWakeTime;
+    const TickType_t taskPeriodTicks;
+    
+    // SPI protection
+    SpiMutex spiMutex;
+    
+    // Performance monitoring
+    MotorControlPerformanceMetrics performance;
+    
+    // System configuration
+    SystemConfig_t config;
+    
+    // Private methods
+    void executeControlLoop();
+    void processMotorCommands();
+    void updateMotorControlLoops();
+    void reportMotorStatus();
+    bool validateMotorCommand(const MotorCommand_t& cmd);
+    bool isDeadlineMissed();
+};
+
+// =============================================================================
+// MULTI-CORE COMPATIBLE CAR CLASS
+// =============================================================================
+
+class MultiCoreCar : public Initializable {
+public:
+  // Constructor and destructor
+  MultiCoreCar(int rightCS, int leftCS, int steerCS);
+  ~MultiCoreCar();
+  
+  // Initialization and cleanup
+  bool initialize();
+  void cleanup();
+  
+  // Status reporting
+  bool getCurrentStatus(MotorStatus_t& status);
+  bool isHealthy();
+  
+  // Configuration
+  void setSystemConfig(const SystemConfig_t& config);
+  
+  // Performance monitoring
+  MotorControlPerformanceMetrics getPerformanceMetrics();
+  
+protected:
+  // Virtual method implementations from Initializable
+  virtual bool doInitialize() override;
+  virtual void doCleanup() override;
+  virtual bool doHealthCheck() const override;
+  
+private:
+  // Motor instances
   DriveMotor rightMotor;
   DriveMotor leftMotor;
   SteeringMotor steeringMotor;
-
-  Car(int rightCS, int leftCS, int steerCS);
-  void updateControlLoops();
-  void begin();
-  void setSteeringAngle(float angle);
-  void setSpeed(float rpm, float wheelbase, float trackWidth);
-  float getRightMotorRPM();
-  float getLeftMotorRPM();
-
-private:
-  SemaphoreHandle_t carMutex;
-  void lock();
-  void unlock();
+  
+  // Inter-core communication
+  ThreadSafeCarState* carState;
+  
+  // Task management
+  MotorControlTask motorControlTask;
+  
+  // SPI isolation mutex (ensures single-core SPI access)
+  SpiMutex spiMutex;
+  
+  // System configuration
+  SystemConfig_t systemConfig;
+  
+  // Private methods
+  bool initializeMotors();
+  void cleanupMotors();
 };
+
 
 #endif // CAR_H   
