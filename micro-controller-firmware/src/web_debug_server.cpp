@@ -172,136 +172,133 @@ void WebDebugServer::addLogEntry(const String& level, const String& component, c
 }
 
 String WebDebugServer::generateHTML() {
-    String html = R"(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>ESP32 Debug Console</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body { font-family: 'Courier New', monospace; margin: 0; padding: 20px; background: #1a1a1a; color: #00ff00; }
-        .header { text-align: center; margin-bottom: 20px; }
-        .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
-        .status-card { background: #2a2a2a; padding: 15px; border-radius: 5px; border-left: 4px solid #00ff00; }
-        .status-card h3 { margin: 0 0 10px 0; color: #00ff00; }
-        .status-value { font-size: 14px; color: #ffffff; }
-        .logs-container { background: #000000; padding: 15px; border-radius: 5px; height: 400px; overflow-y: auto; }
-        .log-entry { margin-bottom: 5px; font-size: 12px; }
-        .log-timestamp { color: #666666; }
-        .log-level-INFO { color: #00ff00; }
-        .log-level-WARN { color: #ffff00; }
-        .log-level-ERROR { color: #ff0000; }
-        .log-level-DEBUG { color: #00ffff; }
-        .log-component { color: #ffffff; font-weight: bold; }
-        .log-message { color: #cccccc; }
-        .refresh-btn { background: #00ff00; color: #000000; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 10px 0; }
-        .refresh-btn:hover { background: #00cc00; }
-        .auto-refresh { margin-left: 10px; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>🤖 ESP32 Debug Console</h1>
-        <p>Real-time system monitoring and logging</p>
-    </div>
+    String html = "<!DOCTYPE html>\n";
+    html += "<html>\n";
+    html += "<head>\n";
+    html += "    <title>ESP32 Debug Console</title>\n";
+    html += "    <meta charset=\"UTF-8\">\n";
+    html += "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n";
+    html += "    <style>\n";
+    html += "        body { font-family: 'Courier New', monospace; margin: 0; padding: 20px; background: #1a1a1a; color: #00ff00; }\n";
+    html += "        .header { text-align: center; margin-bottom: 20px; }\n";
+    html += "        .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }\n";
+    html += "        .status-card { background: #2a2a2a; padding: 15px; border-radius: 5px; border-left: 4px solid #00ff00; }\n";
+    html += "        .status-card h3 { margin: 0 0 10px 0; color: #00ff00; }\n";
+    html += "        .status-value { font-size: 14px; color: #ffffff; }\n";
+    html += "        .logs-container { background: #000000; padding: 15px; border-radius: 5px; height: 400px; overflow-y: auto; }\n";
+    html += "        .log-entry { margin-bottom: 5px; font-size: 12px; }\n";
+    html += "        .log-timestamp { color: #666666; }\n";
+    html += "        .log-level-INFO { color: #00ff00; }\n";
+    html += "        .log-level-WARN { color: #ffff00; }\n";
+    html += "        .log-level-ERROR { color: #ff0000; }\n";
+    html += "        .log-level-DEBUG { color: #00ffff; }\n";
+    html += "        .log-component { color: #ffffff; font-weight: bold; }\n";
+    html += "        .log-message { color: #cccccc; }\n";
+    html += "        .refresh-btn { background: #00ff00; color: #000000; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 10px 0; }\n";
+    html += "        .refresh-btn:hover { background: #00cc00; }\n";
+    html += "        .auto-refresh { margin-left: 10px; }\n";
+    html += "    </style>\n";
+    html += "</head>\n";
+    html += "<body>\n";
+    html += "    <div class=\"header\">\n";
+    html += "        <h1>🤖 ESP32 Debug Console</h1>\n";
+    html += "        <p>Real-time system monitoring and logging</p>\n";
+    html += "    </div>\n";
+    html += "    \n";
+    html += "    <div class=\"status-grid\">\n";
+    html += "        <div class=\"status-card\">\n";
+    html += "            <h3>System Status</h3>\n";
+    html += "            <div class=\"status-value\" id=\"system-status\">Loading...</div>\n";
+    html += "        </div>\n";
+    html += "        <div class=\"status-card\">\n";
+    html += "            <h3>ROS Connection</h3>\n";
+    html += "            <div class=\"status-value\" id=\"ros-status\">Loading...</div>\n";
+    html += "        </div>\n";
+    html += "        <div class=\"status-card\">\n";
+    html += "            <h3>Motor Control</h3>\n";
+    html += "            <div class=\"status-value\" id=\"motor-status\">Loading...</div>\n";
+    html += "        </div>\n";
+    html += "        <div class=\"status-card\">\n";
+    html += "            <h3>Performance</h3>\n";
+    html += "            <div class=\"status-value\" id=\"performance-metrics\">Loading...</div>\n";
+    html += "        </div>\n";
+    html += "    </div>\n";
+    html += "    \n";
+    html += "    <button class=\"refresh-btn\" onclick=\"refreshData()\">Refresh</button>\n";
+    html += "    <label class=\"auto-refresh\">\n";
+    html += "        <input type=\"checkbox\" id=\"auto-refresh\" checked> Auto-refresh (2s)\n";
+    html += "    </label>\n";
+    html += "    \n";
+    html += "    <div class=\"logs-container\" id=\"logs-container\">\n";
+    html += "        <div class=\"log-entry\">Loading logs...</div>\n";
+    html += "    </div>\n";
+    html += "    \n";
+    html += "    <script>\n";
+    html += "        let autoRefreshInterval;\n";
+    html += "        \n";
+    html += "        function refreshData() {\n";
+    html += "            fetch('/api/data')\n";
+    html += "                .then(response => response.json())\n";
+    html += "                .then(data => {\n";
+    html += "                    document.getElementById('system-status').textContent = data.systemStatus;\n";
+    html += "                    document.getElementById('ros-status').textContent = data.rosStatus;\n";
+    html += "                    document.getElementById('motor-status').textContent = data.motorStatus;\n";
+    html += "                    document.getElementById('performance-metrics').textContent = data.performanceMetrics;\n";
+    html += "                    \n";
+    html += "                    const logsContainer = document.getElementById('logs-container');\n";
+    html += "                    logsContainer.innerHTML = '';\n";
+    html += "                    \n";
+    html += "                    data.logs.forEach(log => {\n";
+    html += "                        const logEntry = document.createElement('div');\n";
+    html += "                        logEntry.className = 'log-entry';\n";
+    html += "                        logEntry.innerHTML = '<span class=\"log-timestamp\">[' + new Date(log.timestamp).toLocaleTimeString() + ']</span> ' +\n";
+    html += "                                      '<span class=\"log-level-' + log.level + '\">[' + log.level + ']</span> ' +\n";
+    html += "                                      '<span class=\"log-component\">' + log.component + ':</span> ' +\n";
+    html += "                                      '<span class=\"log-message\">' + log.message + '</span>';\n";
+    html += "                        logsContainer.appendChild(logEntry);\n";
+    html += "                    });\n";
+    html += "                    \n";
+    html += "                    logsContainer.scrollTop = logsContainer.scrollHeight;\n";
+    html += "                })\n";
+    html += "                .catch(error => console.error('Error:', error));\n";
+    html += "        }\n";
+    html += "        \n";
+    html += "        function toggleAutoRefresh() {\n";
+    html += "            const checkbox = document.getElementById('auto-refresh');\n";
+    html += "            if (checkbox.checked) {\n";
+    html += "                autoRefreshInterval = setInterval(refreshData, 2000);\n";
+    html += "            } else {\n";
+    html += "                clearInterval(autoRefreshInterval);\n";
+    html += "            }\n";
+    html += "        }\n";
+    html += "        \n";
+    html += "        document.getElementById('auto-refresh').addEventListener('change', toggleAutoRefresh);\n";
+    html += "        \n";
+    html += "        // Initial load and start auto-refresh\n";
+    html += "        refreshData();\n";
+    html += "        toggleAutoRefresh();\n";
+    html += "    </script>\n";
+    html += "</body>\n";
+    html += "</html>\n";
     
-    <div class="status-grid">
-        <div class="status-card">
-            <h3>System Status</h3>
-            <div class="status-value" id="system-status">Loading...</div>
-        </div>
-        <div class="status-card">
-            <h3>ROS Connection</h3>
-            <div class="status-value" id="ros-status">Loading...</div>
-        </div>
-        <div class="status-card">
-            <h3>Motor Control</h3>
-            <div class="status-value" id="motor-status">Loading...</div>
-        </div>
-        <div class="status-card">
-            <h3>Performance</h3>
-            <div class="status-value" id="performance-metrics">Loading...</div>
-        </div>
-    </div>
-    
-    <button class="refresh-btn" onclick="refreshData()">Refresh</button>
-    <label class="auto-refresh">
-        <input type="checkbox" id="auto-refresh" checked> Auto-refresh (2s)
-    </label>
-    
-    <div class="logs-container" id="logs-container">
-        <div class="log-entry">Loading logs...</div>
-    </div>
-    
-    <script>
-        let autoRefreshInterval;
-        
-        function refreshData() {
-            fetch('/api/data')
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById('system-status').textContent = data.systemStatus;
-                    document.getElementById('ros-status').textContent = data.rosStatus;
-                    document.getElementById('motor-status').textContent = data.motorStatus;
-                    document.getElementById('performance-metrics').textContent = data.performanceMetrics;
-                    
-                    const logsContainer = document.getElementById('logs-container');
-                    logsContainer.innerHTML = '';
-                    
-                    data.logs.forEach(log => {
-                        const logEntry = document.createElement('div');
-                        logEntry.className = 'log-entry';
-                        logEntry.innerHTML = `
-                            <span class="log-timestamp">[${new Date(log.timestamp).toLocaleTimeString()}]</span>
-                            <span class="log-level-${log.level}">[${log.level}]</span>
-                            <span class="log-component">${log.component}:</span>
-                            <span class="log-message">${log.message}</span>
-                        `;
-                        logsContainer.appendChild(logEntry);
-                    });
-                    
-                    logsContainer.scrollTop = logsContainer.scrollHeight;
-                })
-                .catch(error => console.error('Error:', error));
-        }
-        
-        function toggleAutoRefresh() {
-            const checkbox = document.getElementById('auto-refresh');
-            if (checkbox.checked) {
-                autoRefreshInterval = setInterval(refreshData, 2000);
-            } else {
-                clearInterval(autoRefreshInterval);
-            }
-        }
-        
-        document.getElementById('auto-refresh').addEventListener('change', toggleAutoRefresh);
-        
-        // Initial load and start auto-refresh
-        refreshData();
-        toggleAutoRefresh();
-    </script>
-</body>
-</html>
-)";
     return html;
 }
 
 String WebDebugServer::generateJSON() {
-    DynamicJsonDocument doc(4096);
+    JsonDocument doc;
     
     doc["systemStatus"] = systemStatus;
     doc["rosStatus"] = rosStatus;
     doc["motorStatus"] = motorStatus;
     doc["performanceMetrics"] = performanceMetrics;
     
-    JsonArray logs = doc.createNestedArray("logs");
+    JsonArray logs = doc["logs"].to<JsonArray>();
     int startIndex = (logCount < MAX_LOG_ENTRIES) ? 0 : logIndex;
     int count = logCount;
     
     for (int i = 0; i < count; i++) {
         int index = (startIndex + i) % MAX_LOG_ENTRIES;
-        JsonObject log = logs.createNestedObject();
+        JsonObject log = logs.add<JsonObject>();
         log["timestamp"] = logEntries[index].timestamp;
         log["level"] = logEntries[index].level;
         log["component"] = logEntries[index].component;
