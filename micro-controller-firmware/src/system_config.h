@@ -18,6 +18,10 @@
 #define WEB_SERVER_PORT 80  // Web server port
 #define MAX_LOG_ENTRIES 100  // Maximum number of log entries to store
 
+// USB Configuration
+#define ENABLE_USB_CDC 1  // Set to 0 to disable USB CDC (useful for standalone operation)
+#define USB_INIT_RETRY_COUNT 5  // Number of USB initialization retries
+
 // Task priorities (higher number = higher priority)
 #define MOTOR_CONTROL_TASK_PRIORITY     24
 #define ROS_COMM_TASK_PRIORITY          10
