@@ -319,6 +319,13 @@ void ROSCommTask::handleAgentConnection() {
     
     switch (agentState) {
         case WAITING_AGENT:
+            // LED slow blink = waiting for agent
+            if (currentTime % 1000 < 500) {
+                digitalWrite(LED_BUILTIN, HIGH);
+            } else {
+                digitalWrite(LED_BUILTIN, LOW);
+            }
+            
             if (currentTime - lastAgentPingTime >= config.agent_ping_interval_ms) {
                 if (pingAgent()) {
                     agentState = AGENT_AVAILABLE;
@@ -328,6 +335,9 @@ void ROSCommTask::handleAgentConnection() {
             break;
             
         case AGENT_AVAILABLE:
+            // LED fast blink = agent found, creating entities
+            digitalWrite(LED_BUILTIN, (currentTime % 200 < 100) ? HIGH : LOW);
+            
             if (createROS2Entities()) {
                 agentState = AGENT_CONNECTED;
                 reconnectionAttempts = 0;
@@ -338,6 +348,9 @@ void ROSCommTask::handleAgentConnection() {
             break;
             
         case AGENT_CONNECTED:
+            // LED solid = connected
+            digitalWrite(LED_BUILTIN, HIGH);
+            
             if (currentTime - lastAgentPingTime >= config.agent_ping_interval_ms) {
                 if (!pingAgent()) {
                     agentState = AGENT_DISCONNECTED;
@@ -348,6 +361,8 @@ void ROSCommTask::handleAgentConnection() {
             break;
             
         case AGENT_DISCONNECTED:
+            // LED off = disconnected
+            digitalWrite(LED_BUILTIN, LOW);
             destroyROS2Entities();
             agentState = WAITING_AGENT;
             break;

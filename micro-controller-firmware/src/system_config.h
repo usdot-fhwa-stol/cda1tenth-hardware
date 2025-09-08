@@ -8,6 +8,11 @@
 // COMPILE-TIME CONFIGURATION CONSTANTS
 // =============================================================================
 
+// Development flags
+#ifndef ENABLE_MOTOR_CONTROL
+#define ENABLE_MOTOR_CONTROL 1  // Set to 0 for standalone development without TMC drivers
+#endif
+
 // Task priorities (higher number = higher priority)
 #define MOTOR_CONTROL_TASK_PRIORITY     24
 #define ROS_COMM_TASK_PRIORITY          10

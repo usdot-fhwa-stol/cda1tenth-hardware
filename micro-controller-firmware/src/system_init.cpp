@@ -120,29 +120,49 @@ bool SystemInitializer::initializeUSB() {
         return true;
     }
     
+    // Initialize LED for debugging
+    pinMode(LED_BUILTIN, OUTPUT);
+    digitalWrite(LED_BUILTIN, HIGH); // LED on = USB init starting
+    
     // Initialize USB CDC
     USB.begin();
+    
+    // Wait a bit for USB to initialize
+    delay(1000);
+    
+    // Begin serial communication
     USBSerial.begin(systemConfig.serial_baud_rate);
     
-    // Wait for USB to be ready
-    uint32_t timeout = millis() + 5000; // 5 second timeout
+    // Wait for USB to be ready with longer timeout
+    uint32_t timeout = millis() + 10000; // 10 second timeout
     while (!USBSerial && millis() < timeout) {
-        delay(10);
+        delay(100);
     }
     
     if (!USBSerial) {
+        digitalWrite(LED_BUILTIN, LOW); // LED off = USB failed
         errorHandler.handleError("USB CDC not ready after timeout");
         return false;
     }
     
-    delay(2000); // Give more time for serial to initialize
+    // Give more time for serial to stabilize
+    delay(3000);
+    
+    // Test serial communication
+    USBSerial.println("USB CDC initialized successfully");
+    USBSerial.flush();
     
     // Configure Micro-ROS library to use USB CDC serial
     set_microros_serial_transports(USBSerial);
     
+    // LED blinking = USB ready, micro-ROS transport configured
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(100);
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(100);
+    digitalWrite(LED_BUILTIN, LOW);
+    
     usbInitialized = true;
-    // Note: Can't use ROS logger here as it's not initialized yet
-    // This will be logged once ROS logger is available
     
     return true;
 }
