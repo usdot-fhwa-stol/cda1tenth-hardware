@@ -8,10 +8,9 @@
 // COMPILE-TIME CONFIGURATION CONSTANTS
 // =============================================================================
 
-// Development flags
-#ifndef ENABLE_MOTOR_CONTROL
-#define ENABLE_MOTOR_CONTROL 1  // Set to 0 for standalone development without TMC drivers
-#endif
+// Hardware pin definitions
+#define NEOPIXEL_PIN 48  // WS2812 NeoPixel RGB LED pin
+#define NEOPIXEL_COUNT 1  // Number of NeoPixels
 
 // Task priorities (higher number = higher priority)
 #define MOTOR_CONTROL_TASK_PRIORITY     24

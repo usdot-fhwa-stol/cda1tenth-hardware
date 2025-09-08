@@ -45,25 +45,7 @@ void setup() {
 void loop() {
   // Main loop now just monitors system health and provides status updates
   static uint32_t lastStatusUpdate = 0;
-  static uint32_t lastSerialDebug = 0;
   uint32_t currentTime = millis();
-  
-  // Print serial debug every 5 seconds (for standalone debugging)
-  if (currentTime - lastSerialDebug >= 5000) {
-    USBSerial.println("=== SYSTEM DEBUG ===");
-    USBSerial.printf("System Healthy: %s\n", isSystemHealthy() ? "YES" : "NO");
-    USBSerial.printf("System Initialized: %s\n", isSystemInitialized() ? "YES" : "NO");
-    
-    ROSCommTask* rosTask = getROSCommTask();
-    if (rosTask != nullptr) {
-      USBSerial.printf("ROS Task Running: %s\n", rosTask->isRunning() ? "YES" : "NO");
-      USBSerial.printf("ROS Agent Connected: %s\n", rosTask->isAgentConnected() ? "YES" : "NO");
-    } else {
-      USBSerial.println("ROS Task: NULL");
-    }
-    USBSerial.println("===================");
-    lastSerialDebug = currentTime;
-  }
   
   // Print detailed status every 10 seconds
   if (currentTime - lastStatusUpdate >= 10000) {

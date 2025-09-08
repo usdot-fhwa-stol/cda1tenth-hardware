@@ -1,6 +1,7 @@
 #include "ros_comm_task.h"
 #include <math.h>
 #include <stdio.h>
+#include "neopixel_led.h"
 
 // Static instance pointer for callbacks
 ROSCommTask* ROSCommTask::instance = nullptr;
@@ -319,12 +320,8 @@ void ROSCommTask::handleAgentConnection() {
     
     switch (agentState) {
         case WAITING_AGENT:
-            // LED slow blink = waiting for agent
-            if (currentTime % 1000 < 500) {
-                digitalWrite(LED_BUILTIN, HIGH);
-            } else {
-                digitalWrite(LED_BUILTIN, LOW);
-            }
+            // Blue slow blink = waiting for agent
+            statusLED.showWaitingForAgent();
             
             if (currentTime - lastAgentPingTime >= config.agent_ping_interval_ms) {
                 if (pingAgent()) {
@@ -335,8 +332,8 @@ void ROSCommTask::handleAgentConnection() {
             break;
             
         case AGENT_AVAILABLE:
-            // LED fast blink = agent found, creating entities
-            digitalWrite(LED_BUILTIN, (currentTime % 200 < 100) ? HIGH : LOW);
+            // Yellow fast blink = agent found, creating entities
+            statusLED.showAgentFound();
             
             if (createROS2Entities()) {
                 agentState = AGENT_CONNECTED;
@@ -348,8 +345,8 @@ void ROSCommTask::handleAgentConnection() {
             break;
             
         case AGENT_CONNECTED:
-            // LED solid = connected
-            digitalWrite(LED_BUILTIN, HIGH);
+            // Green solid = connected
+            statusLED.showConnected();
             
             if (currentTime - lastAgentPingTime >= config.agent_ping_interval_ms) {
                 if (!pingAgent()) {
@@ -362,7 +359,7 @@ void ROSCommTask::handleAgentConnection() {
             
         case AGENT_DISCONNECTED:
             // LED off = disconnected
-            digitalWrite(LED_BUILTIN, LOW);
+            statusLED.showDisconnected();
             destroyROS2Entities();
             agentState = WAITING_AGENT;
             break;

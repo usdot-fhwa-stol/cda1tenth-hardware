@@ -3,6 +3,7 @@
 #include "USBCDC.h"
 #include <micro_ros_platformio.h>
 #include <stdio.h>
+#include "neopixel_led.h"
 
 // External USB Serial declaration
 extern USBCDC USBSerial;
@@ -120,9 +121,12 @@ bool SystemInitializer::initializeUSB() {
         return true;
     }
     
-    // Initialize LED for debugging
-    pinMode(LED_BUILTIN, OUTPUT);
-    digitalWrite(LED_BUILTIN, HIGH); // LED on = USB init starting
+    // Initialize NeoPixel LED for debugging
+    if (!statusLED.initialize()) {
+        errorHandler.handleError("Failed to initialize NeoPixel LED");
+        return false;
+    }
+    statusLED.showUSBInit(); // Blue LED = USB init starting
     
     // Initialize USB CDC
     USB.begin();
@@ -140,7 +144,7 @@ bool SystemInitializer::initializeUSB() {
     }
     
     if (!USBSerial) {
-        digitalWrite(LED_BUILTIN, LOW); // LED off = USB failed
+        statusLED.showUSBError(); // Red LED = USB failed
         errorHandler.handleError("USB CDC not ready after timeout");
         return false;
     }
@@ -155,12 +159,8 @@ bool SystemInitializer::initializeUSB() {
     // Configure Micro-ROS library to use USB CDC serial
     set_microros_serial_transports(USBSerial);
     
-    // LED blinking = USB ready, micro-ROS transport configured
-    digitalWrite(LED_BUILTIN, LOW);
-    delay(100);
-    digitalWrite(LED_BUILTIN, HIGH);
-    delay(100);
-    digitalWrite(LED_BUILTIN, LOW);
+    // LED sequence = USB ready, micro-ROS transport configured
+    statusLED.showUSBReady();
     
     usbInitialized = true;
     
