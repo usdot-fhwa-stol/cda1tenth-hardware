@@ -129,7 +129,37 @@ bool SystemInitializer::initializeUSB() {
     }
     statusLED.showUSBInit(); // Blue LED = USB init starting
     
-    // Initialize web debug server
+    // Initialize USB CDC first (before web server to avoid interference)
+    // Initialize USB CDC using the working approach
+    
+    // Initialize USB CDC (following your working pattern)
+    USB.begin();
+    USBSerial.begin(systemConfig.serial_baud_rate);
+    
+    // Wait for USB to be ready (simple approach that worked)
+    while (!USBSerial) {
+        delay(10);
+    }
+    
+    delay(2000); // Give more time for serial to initialize
+    
+    // Test serial communication
+    USBSerial.println("USB CDC initialized successfully");
+    USBSerial.flush();
+    
+    // Configure Micro-ROS library to use USB CDC serial
+    set_microros_serial_transports(USBSerial);
+    
+    // LED sequence = USB ready, micro-ROS transport configured
+    statusLED.showUSBReady();
+    
+    // Update web debug status
+    webDebugServer.logInfo("USB", "USB CDC initialized successfully");
+    webDebugServer.updateSystemStatus("USB ready, micro-ROS transport configured");
+    
+    usbInitialized = true;
+    
+    // Now initialize web debug server (after USB is working)
     if (!webDebugServer.initialize()) {
         errorHandler.handleError("Failed to initialize web debug server");
         return false;
@@ -143,79 +173,7 @@ bool SystemInitializer::initializeUSB() {
     
     // Log initial status
     webDebugServer.logInfo("SYSTEM", "Web debug server initialized");
-    webDebugServer.updateSystemStatus("USB initialization starting...");
-    
-    // Initialize USB CDC with retry mechanism
-    bool usbReady = false;
-    int retryCount = 0;
-    const int maxRetries = USB_INIT_RETRY_COUNT;
-    
-    while (!usbReady && retryCount < maxRetries) {
-        webDebugServer.logInfo("USB", "Attempting USB CDC initialization (attempt " + String(retryCount + 1) + "/" + String(maxRetries) + ")");
-        
-        // Initialize USB
-        USB.begin();
-        
-        // Wait for USB to initialize
-        delay(2000);
-        
-        // Begin serial communication
-        USBSerial.begin(systemConfig.serial_baud_rate);
-        
-        // Wait for USB to be ready with timeout
-        uint32_t timeout = millis() + 5000; // 5 second timeout per attempt
-        while (!USBSerial && millis() < timeout) {
-            delay(50);
-        }
-        
-        if (USBSerial) {
-            usbReady = true;
-            webDebugServer.logInfo("USB", "USB CDC initialized successfully on attempt " + String(retryCount + 1));
-        } else {
-            retryCount++;
-            webDebugServer.logWarning("USB", "USB CDC initialization failed on attempt " + String(retryCount) + ", retrying...");
-            delay(1000);
-        }
-    }
-    
-    if (!usbReady) {
-        statusLED.showUSBError(); // Red LED = USB failed
-        webDebugServer.logError("USB", "USB CDC initialization failed after " + String(maxRetries) + " attempts");
-        webDebugServer.updateSystemStatus("USB initialization failed - continuing without USB CDC");
-        
-        // Continue without USB CDC - the web interface will still work
-        webDebugServer.logWarning("USB", "Continuing system initialization without USB CDC");
-        webDebugServer.updateSystemStatus("System running without USB CDC - use web interface for debugging");
-        
-        // Don't return false - let the system continue with web interface only
-        // errorHandler.handleError("USB CDC not ready after timeout");
-        // return false;
-    }
-    
-    // Give more time for serial to stabilize
-    delay(3000);
-    
-    if (usbReady) {
-        // Test serial communication
-        USBSerial.println("USB CDC initialized successfully");
-        USBSerial.flush();
-        
-        // Configure Micro-ROS library to use USB CDC serial
-        set_microros_serial_transports(USBSerial);
-        
-        // LED sequence = USB ready, micro-ROS transport configured
-        statusLED.showUSBReady();
-        
-        // Update web debug status
-        webDebugServer.logInfo("USB", "USB CDC initialized successfully");
-        webDebugServer.updateSystemStatus("USB ready, micro-ROS transport configured");
-    } else {
-        // USB failed - micro-ROS won't work, but web interface will
-        webDebugServer.logWarning("USB", "USB CDC failed - micro-ROS transport not available");
-        webDebugServer.updateSystemStatus("USB failed - micro-ROS not available, web interface active");
-    }
-    
-    usbInitialized = true;
+    webDebugServer.updateSystemStatus("System fully initialized - USB and web interface ready");
     
     return true;
 }
