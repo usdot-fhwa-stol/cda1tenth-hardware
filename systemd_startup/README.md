@@ -6,4 +6,8 @@ sudo cp ./teleop-joy-startup.timer /etc/systemd/system/
 sudo cp ./teleop-joy-startup.service /etc/systemd/system/
 sudo systemctl enable micro-ros-startup.service
 sudo systemctl enable teleop-joy-startup.timer
+
+sudo cp ./50-input.rules /etc/udev/rules.d/50-input.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
 ```
