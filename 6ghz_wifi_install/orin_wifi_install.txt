@@ -1,0 +1,104 @@
+# These instructions are meant to be run AFTER the orin_wifi_kernel_build.txt instructions, so make sure you have the 'ifx-backports' folder 
+# I would recommend running this line-by-line and babying the output to make sure you don't fall off the rails <3
+# Unfortunately, for 6GHz wifi, the default ubuntu network manager DOES NOT WORK and will fail to connect. So later in these instructions we install wpa_supplicant as a replacement (which disables the default network manager). This makes connecting to other even non-6GHz wifi networks a bit more of a pain (instructions at the end)
+
+# On a separate device (or you can connect the Jetson to wifi)
+# Copy over to the jetson ifx-backports and these folders (or zip them). Make sure your flash drive is ext4, because the jetson won't have the drivers for exfat by default
+cd $WORK_DIR
+git clone https://github.com/Infineon/ifx-linux-firmware.git
+git clone https://github.com/murata-wireless/cyw-fmac-nvram.git
+git clone https://github.com/murata-wireless/cyw-fmac-fw.git
+git clone https://github.com/Infineon/ifx-hostap.git
+
+# Put them in ~/wifi_driver_build of the jetson
+mkdir ~/wifi_driver_build
+cd ~/wifi_driver_build
+sudo mv /lib/modules/5.15.148-tegra/kernel/net/wireless/cfg80211.ko /lib/modules/5.15.148-tegra/kernel/net/wireless/cfg80211.ko.bak
+sudo mv /lib/modules/5.15.148-tegra/kernel/drivers/net/wireless/broadcom/brcm80211/brcmutil/brcmutil.ko /lib/modules/5.15.148-tegra/kernel/drivers/net/wireless/broadcom/brcm80211/brcmutil/brcmutil.ko.bak
+sudo mv /lib/modules/5.15.148-tegra/kernel/drivers/net/wireless/broadcom/brcm80211/brcmfmac/brcmfmac.ko /lib/modules/5.15.148-tegra/kernel/drivers/net/wireless/broadcom/brcm80211/brcmfmac/brcmfmac.ko.bak
+
+sudo cp ~/wifi_driver_build/ifx-backports/v6.1.97-backports/compat/compat.ko /lib/modules/5.15.148-tegra/updates/
+sudo cp ~/wifi_driver_build/ifx-backports/v6.1.97-backports/net/wireless/cfg80211.ko /lib/modules/5.15.148-tegra/updates/
+sudo cp ~/wifi_driver_build/ifx-backports/v6.1.97-backports/drivers/net/wireless/broadcom/brcm80211/brcmutil/brcmutil.ko /lib/modules/5.15.148-tegra/updates/
+sudo cp ~/wifi_driver_build/ifx-backports/v6.1.97-backports/drivers/net/wireless/broadcom/brcm80211/brcmfmac/brcmfmac.ko /lib/modules/5.15.148-tegra/updates/
+sudo depmod -a
+
+sudo cp ~/wifi_driver_build/ifx-linux-firmware/firmware/cyfmac* /lib/firmware/cypress
+sudo cp ~/wifi_driver_build/cyw-fmac-nvram/cyfmac5557x-pcie_sdio.dant.2EA_2EC.txt /lib/firmware/cypress/cyfmac55572-pcie.txt
+sudo cp ~/wifi_driver_build/cyw-fmac-fw/cyfmac55572-pcie.2EA.clm_blob_STAIndoor /lib/firmware/cypress/cyfmac55572-pcie.clm_blob
+sudo reboot now
+
+# Install prerequisites
+sudo apt update
+sudo apt install libnl-3-dev libnl-genl-3-dev libnl-route-3-dev libnl-nf-3-dev libssl-dev libdbus-1-dev
+
+# Build
+cd ~/wifi_driver_build/ifx-hostap/wpa_supplicant
+cp defconfig_base .config
+make clean
+make -j 4
+cd ~/wifi_driver_build/ifx-hostap/hostapd
+cp defconfig_base .config
+make clean
+make -j 4
+# Install
+sudo systemctl stop NetworkManager
+sudo systemctl disable NetworkManager
+sudo systemctl disable wpa_supplicant.service
+sudo pkill wpa_supplicant
+sudo cp ~/wifi_driver_build/ifx-hostap/wpa_supplicant/wpa_supplicant /usr/sbin
+sudo cp ~/wifi_driver_build/ifx-hostap/wpa_supplicant/wpa_cli /usr/sbin
+sudo cp ~/wifi_driver_build/ifx-hostap/hostapd/hostapd /usr/sbin
+sudo cp ~/wifi_driver_build/ifx-hostap/hostapd/hostapd_cli /usr/sbin
+
+iw list
+# You should see: 
+# ...
+# Band 4
+# ...
+# Frequencies: 
+#         * 5955 MHz [1] (12.0dBm) (no IR)
+# ...
+# Make sure you have 5955 as a listed frequency. If you don't see 'no IR', that's fine
+# The default network manager doesn't support this device, we need to build and use wpa_supplicant instead
+
+# Now, to actually run a wifi network you need to set up a wpa_supplicant config file. If you want to connect to a 6GHz network, follow the instructions below. If you want to connect to a 2.4/5GHz network, follow the instructions at the bottom of the page
+# For 6GHz, edit the file wpas-example-6ghz.conf to include your wifi SSID and password, and you can rename it (here we use wpas-cda1t6ghz.conf)
+sudo pkill wpa_supplicant
+sudo wpa_supplicant -i wlP1p1s0 -c ~/wifi_driver_build/wpas-cda1t6ghz.conf
+
+# in another terminal
+iw dev wlP1p1s0 info # debugging
+sudo dhcpclient wlP1p1s0
+sudo iw wlP1p1s0 link # debugging
+ifconfig # debugging
+ping 192.168.1.1 # debugging
+ping 8.8.8.8 # debugging
+# If this works, you're connected and everything is working! yay!
+
+
+# If you want to set it up to automagically connect to a wifi network on boot, here is the easiest way: 
+# wpas-cda1t6ghz.conf is a 6GHz wifi config
+# wpas-saxtonlink.conf is a 5GHz wifi config (more information at the bottom of this page)
+# Edit wpas-wlP1p1s0.service to point to the config file you want
+# Edit wlP1p1s0.network to set DHCP vs. a static IP address
+sudo pkill wpa_supplicant
+sudo cp ./wpas-saxtonlink.conf /etc/wpa_supplicant/
+sudo cp ./wpas-cda1t6ghz.conf /etc/wpa_supplicant/
+sudo cp ./wpas-wlP1p1s0.service /etc/systemd/system/
+sudo systemctl enable wpas-wlP1p1s0.service
+sudo systemctl start wpas-wlP1p1s0.service
+sudo cp ./wlP1p1s0.network /etc/systemd/network/
+sudo systemctl enable systemd-networkd
+sudo systemctl start systemd-networkd
+
+#####################################################################
+# To instead connect to a 2.4/5GHz network: 
+wpa_passphrase "username" "password" | sudo tee ~/wifi_driver_build/wpas-saxtonlink.conf
+sudo pkill wpa_supplicant
+sudo wpa_supplicant -i wlP1p1s0 -c ~/wifi_driver_build/saxtonlink_wpas.conf -B
+sudo dhcpclient wlP1p1s0
+sudo iw wlP1p1s0 link # debugging
+ifconfig # debugging
+ping 8.8.8.8 # debugging
+

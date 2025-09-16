@@ -1,0 +1,120 @@
+# This repo includes a pre-built copy of ifx-backports, so you don't need to run this if you don't want to
+# Near the end there is some code you need to add to a file. Also, it's just super sketch so I would recommend running it line-by-line and babying the output to make sure you don't fall off the rails <3
+# Also, this DOES NOT WORK for Jetpack 6.0, ${WORK_DIR}/Linux_for_Tegra/tools/l4t_update_initrd.sh does not exist while attempting to build the kernel. I assume that it will not work for any other Jetpack version other than 6.2. 
+
+sudo apt install git-core build-essential bc bison flex
+
+WORK_DIR=/home/annika/Documents/LEIDOS/CDA1T/Orin_wifi_build
+cd $WORK_DIR
+# install packages from https://developer.nvidia.com/embedded/jetson-linux-r3643
+# 1. Driver Package (BSP)
+# 2. Sample Root Filesystem
+# 3. Driver Package (BSP) Sources
+# 4. Bootlin Toolchain gcc 11.3 
+L4T_GCC_PACKAGE=${WORK_DIR}/aarch64--glibc--stable-2022.08-1.tar.bz2
+L4T_RELEASE_PACKAGE=${WORK_DIR}/Jetson_Linux_R36.4.3_aarch64.tbz2
+SAMPLE_FS_PACKAGE=${WORK_DIR}/Tegra_Linux_Sample-Root-Filesystem_R36.4.3_aarch64.tbz2
+SOURCE_PACKAGE=${WORK_DIR}/public_sources.tbz2
+
+mkdir ${WORK_DIR}/l4t-gcc
+cd ${WORK_DIR}/l4t-gcc
+tar xf ${L4T_GCC_PACKAGE}
+
+export CROSS_COMPILE=${WORK_DIR}/l4t-gcc/aarch64--glibc--stable-2022.08-1/bin/aarch64-buildroot-linux-gnu-
+
+# Create Initial Image
+cd ${WORK_DIR}
+tar xf ${L4T_RELEASE_PACKAGE}
+sudo tar xpf ${SAMPLE_FS_PACKAGE} -C Linux_for_Tegra/rootfs/
+cd Linux_for_Tegra/
+sudo ./tools/l4t_flash_prerequisites.sh
+sudo ./apply_binaries.sh
+
+# Build Kernel
+tar xf ${SOURCE_PACKAGE} -C ${WORK_DIR}/Linux_for_Tegra/..
+cd ${WORK_DIR}/Linux_for_Tegra/source
+tar xf kernel_src.tbz2
+tar xf kernel_oot_modules_src.tbz2
+tar xf nvidia_kernel_display_driver_source.tbz2
+
+make -C kernel
+export INSTALL_MOD_PATH=${WORK_DIR}/Linux_for_Tegra/rootfs
+sudo -E make install -C kernel
+cp kernel/kernel-jammy-src/arch/arm64/boot/Image ${WORK_DIR}/Linux_for_Tegra/kernel/Image
+export KERNEL_HEADERS=$PWD/kernel/kernel-jammy-src
+make modules
+sudo -E make modules_install
+cd ${WORK_DIR}/Linux_for_Tegra
+sudo ./tools/l4t_update_initrd.sh
+cd ${WORK_DIR}/Linux_for_Tegra/source
+make dtbs
+cp kernel-devicetree/generic-dts/dtbs/* ${WORK_DIR}/Linux_for_Tegra/kernel/dtb/
+
+cd $WORK_DIR/Linux_For_Tegra
+# Select based on which device you're using
+sudo ./flash.sh jetson-orin-nano-devkit internal
+# sudo ./flash.sh jetson-agx-orin-devkit internal
+# It will take ~10 minutes
+# After that, connect a display. If it says "A start job is running for End-user configuration after running OEM installation", reboot it once
+# Now go back to your main PC to build the driver
+
+
+
+## Now that the kernel is compiled, build the wifi driver off of it
+cd $WORK_DIR
+git clone git clone https://github.com/Infineon/ifx-backports.git
+# Edit $WORK_DIR/ifx-backports/v6.1.97-backports/backport-include/linux/netdevice.h in vs code, change lines 70-80 to the following (add the #if 0 and #endif before/after):
+```
+#if 0
+/* This was backported to 4.19.312 and 5,4,274, but we do not support such high minor numbers use 255 instead. */
+#if LINUX_VERSION_IS_LESS(6,1,84) &&			\
+	!LINUX_VERSION_IN_RANGE(4,19,255, 4,20,0) &&	\
+	!LINUX_VERSION_IN_RANGE(5,4,255, 5,5,0) &&	\
+	!LINUX_VERSION_IN_RANGE(5,10,215, 5,11,0) &&	\
+	!LINUX_VERSION_IN_RANGE(5,15,154, 5,16,0)
+static inline int timer_delete_sync(struct timer_list *timer)
+{
+	return del_timer_sync(timer);
+}
+#endif /* < 6.1.84 */
+#endif
+```
+
+MY_KERNEL=$WORK_DIR/Linux_for_Tegra/source/kernel/kernel-jammy-src
+UNSET ARCH
+UNSET CROSS_COMPILE
+cd $WORK_DIR/ifx-backports/v6.1.97-backports
+# It is CRITICAL to unset ARCH and CROSS_COMPILE before running this command. It SHOULD build for x86
+make KLIB=$MY_KERNEL KLIB_BUILD=$MY_KERNEL defconfig-brcmfmac
+
+export ARCH=arm64
+export CROSS_COMPILE=${WORK_DIR}/l4t-gcc/aarch64--glibc--stable-2022.08-1/bin/aarch64-buildroot-linux-gnu-
+make KLIB=$MY_KERNEL KLIB_BUILD=$MY_KERNEL modules -j`nproc`
+
+# To check that the driver built fine:
+file $WORK_DIR/ifx-backports/v6.1.97-backports/drivers/net/wireless/broadcom/brcm80211/brcmfmac/brcmfmac.ko
+# You should see 'ELF 64-bit LSB relocatable, ARM aarch64'
+# If so, congrats!! 
+
+
+#########################################################################
+# If you don't end up with the file, you can try:
+cd $MY_KERNEL
+export ARCH=arm64
+export CROSS_COMPILE=${WORK_DIR}/l4t-gcc/aarch64--glibc--stable-2022.08-1/bin/aarch64-buildroot-linux-gnu-
+
+make olddefconfig
+make oldconfig
+make prepare
+
+make clean
+UNSET ARCH
+UNSET CROSS_COMPILE
+cd $WORK_DIR/ifx-backports/v6.1.97-backports
+make KLIB=$MY_KERNEL KLIB_BUILD=$MY_KERNEL defconfig-brcmfmac
+
+export ARCH=arm64
+export CROSS_COMPILE=${WORK_DIR}/l4t-gcc/aarch64--glibc--stable-2022.08-1/bin/aarch64-buildroot-linux-gnu-
+make KLIB=$MY_KERNEL KLIB_BUILD=$MY_KERNEL modules -j`nproc`
+file $WORK_DIR/ifx-backports/v6.1.97-backports/drivers/net/wireless/broadcom/brcm80211/brcmfmac/brcmfmac.ko
+# If this doesn't work, idk girl :(
