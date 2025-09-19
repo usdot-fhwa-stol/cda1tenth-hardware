@@ -78,6 +78,7 @@ protected:
     
 protected:
     TaskErrorHandler taskErrorHandler;
+    TaskHandle_t taskHandle;
     
 private:
     bool taskRunning;

@@ -129,51 +129,82 @@ bool SystemInitializer::initializeUSB() {
     }
     statusLED.showUSBInit(); // Blue LED = USB init starting
     
-    // Initialize USB CDC first (before web server to avoid interference)
-    // Initialize USB CDC using the working approach
+    // Add delay to show LED state
+    delay(1000);
     
-    // Initialize USB CDC (following your working pattern)
+    // Initialize web debug server first for immediate debug access
+    statusLED.setColor(255, 0, 255); // Magenta = web server init
+    delay(500);
+    
+    if (!webDebugServer.initialize()) {
+        statusLED.setColor(255, 0, 0); // Red = web server failed
+        delay(2000);
+        errorHandler.handleError("Failed to initialize web debug server");
+        return false;
+    }
+    
+    // Start WiFi access point
+    statusLED.setColor(255, 255, 0); // Yellow = WiFi starting
+    delay(500);
+    webDebugServer.startWiFiAP();
+    
+    // Start web server
+    statusLED.setColor(0, 255, 255); // Cyan = web server starting
+    delay(500);
+    webDebugServer.startServer();
+    
+    // Log initial status
+    webDebugServer.logInfo("SYSTEM", "Web debug server initialized");
+    webDebugServer.updateSystemStatus("Web interface ready, starting USB initialization...");
+    
+    // Now initialize USB CDC (simplified approach)
+    statusLED.setColor(0, 255, 0); // Green = USB starting
+    delay(500);
+    webDebugServer.logInfo("USB", "Starting USB CDC initialization");
+    
     USB.begin();
     USBSerial.begin(systemConfig.serial_baud_rate);
     
-    // Wait for USB to be ready (simple approach that worked)
-    while (!USBSerial) {
-        delay(10);
+    // Simple wait with timeout to prevent infinite loop
+    uint32_t startTime = millis();
+    while (!USBSerial && (millis() - startTime) < 5000) {
+        delay(50);
+    }
+    
+    // Check if USB is ready
+    if (!USBSerial) {
+        statusLED.setColor(255, 165, 0); // Orange = USB failed but continuing
+        delay(1000);
+        webDebugServer.logWarning("USB", "USB CDC not ready after 5s, continuing anyway");
+        // Don't return false - continue with web interface only
+    } else {
+        statusLED.setColor(0, 255, 0); // Green = USB success
+        delay(500);
+        webDebugServer.logInfo("USB", "USB CDC initialized successfully");
     }
     
     delay(2000); // Give more time for serial to initialize
     
-    // Test serial communication
-    USBSerial.println("USB CDC initialized successfully");
-    USBSerial.flush();
-    
-    // Configure Micro-ROS library to use USB CDC serial
-    set_microros_serial_transports(USBSerial);
+    // Test serial communication only if USB is available
+    if (USBSerial) {
+        USBSerial.println("USB CDC initialized successfully");
+        USBSerial.flush();
+        
+        // Configure Micro-ROS library to use USB CDC serial
+        set_microros_serial_transports(USBSerial);
+        webDebugServer.logInfo("USB", "Micro-ROS transport configured");
+    } else {
+        webDebugServer.logWarning("USB", "USB not available, micro-ROS transport not configured");
+    }
     
     // LED sequence = USB ready, micro-ROS transport configured
     statusLED.showUSBReady();
     
     // Update web debug status
     webDebugServer.logInfo("USB", "USB CDC initialized successfully");
-    webDebugServer.updateSystemStatus("USB ready, micro-ROS transport configured");
+    webDebugServer.updateSystemStatus("System fully initialized - USB and web interface ready");
     
     usbInitialized = true;
-    
-    // Now initialize web debug server (after USB is working)
-    if (!webDebugServer.initialize()) {
-        errorHandler.handleError("Failed to initialize web debug server");
-        return false;
-    }
-    
-    // Start WiFi access point
-    webDebugServer.startWiFiAP();
-    
-    // Start web server
-    webDebugServer.startServer();
-    
-    // Log initial status
-    webDebugServer.logInfo("SYSTEM", "Web debug server initialized");
-    webDebugServer.updateSystemStatus("System fully initialized - USB and web interface ready");
     
     return true;
 }
@@ -263,6 +294,9 @@ bool SystemInitializer::initializeROSCommunicationTask() {
         rosCommTask = nullptr;
         return false;
     }
+    
+    // Log successful task start
+    webDebugServer.logInfo("SYSTEM", "ROS communication task started successfully");
     
     rosTaskInitialized = true;
     

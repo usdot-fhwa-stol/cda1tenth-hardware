@@ -1,6 +1,7 @@
 #include "car.h"
 #include <limits.h>
 #include <math.h>
+#include "web_debug_server.h"
 
 SteeringMotor::SteeringMotor(int cs) : driver(cs, R_SENSE), cs_pin(cs) {}
 
@@ -278,8 +279,8 @@ void MotorControlTask::cleanup() {
 
 // Virtual method implementations from TaskInitializable
 bool MotorControlTask::doInitialize() {
-  // SPI mutex is already created in constructor via SpiMutex
-  return true;
+  // Call the base class to create the task
+  return TaskInitializable::doInitialize();
 }
 
 void MotorControlTask::doCleanup() {
@@ -303,10 +304,16 @@ bool MotorControlTask::createTask() {
   );
   
   if (result != pdPASS) {
+    // Log error via web debug server since ROS logger might not be available yet
+    webDebugServer.logError("MOTOR_TASK", "Failed to create motor control task");
     return false;
   }
   
   lastWakeTime = xTaskGetTickCount();
+  
+  // Log successful task creation
+  webDebugServer.logInfo("MOTOR_TASK", "Motor control task created successfully");
+  
   return true;
 }
 
@@ -513,6 +520,9 @@ bool MultiCoreCar::doInitialize() {
   if (!motorControlTask.startTask()) {
     return false;
   }
+  
+  // Log successful task start
+  webDebugServer.logInfo("MOTOR", "Motor control task started successfully");
   
   return true;
 }

@@ -52,7 +52,7 @@
 // Safety and timeout parameters
 #define COMMAND_TIMEOUT_MS              500     // Max time without new commands
 #define WATCHDOG_TIMEOUT_MS             1000    // Task watchdog timeout
-#define AGENT_PING_INTERVAL_MS          200     // ROS agent ping interval
+#define AGENT_PING_INTERVAL_MS          1000    // ROS agent ping interval (increased for stability)
 #define AGENT_PING_TIMEOUT_MS           100     // ROS agent ping timeout
 
 // Performance monitoring

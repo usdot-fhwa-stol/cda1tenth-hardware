@@ -46,7 +46,7 @@ void Initializable::reportInitializationError(const char* error) {
 // =============================================================================
 
 TaskInitializable::TaskInitializable(const char* componentName)
-    : Initializable(componentName), taskRunning(false), taskErrorHandler(componentName) {
+    : Initializable(componentName), taskRunning(false), taskErrorHandler(componentName), taskHandle(nullptr) {
 }
 
 bool TaskInitializable::doInitialize() {
@@ -68,7 +68,8 @@ bool TaskInitializable::startTask() {
     }
     
     // Task creation is handled in doInitialize()
-    // This method can be used for additional task startup logic
+    // In FreeRTOS, tasks are created in READY state and start running immediately
+    // We just need to set the running flag
     setTaskRunning(true);
     return true;
 }

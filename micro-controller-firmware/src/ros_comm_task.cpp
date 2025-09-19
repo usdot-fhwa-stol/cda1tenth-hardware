@@ -88,7 +88,8 @@ void ROSCommTask::cleanup() {
 
 // Virtual method implementations from TaskInitializable
 bool ROSCommTask::doInitialize() {
-    return true; // State mutex is already created in constructor
+    // Call the base class to create the task
+    return TaskInitializable::doInitialize();
 }
 
 void ROSCommTask::doCleanup() {
@@ -127,10 +128,17 @@ bool ROSCommTask::createTask() {
     );
     
     if (result != pdPASS) {
+        // Log error via web debug server since ROS logger might not be available yet
+        webDebugServer.logError("ROS_TASK", "Failed to create ROS communication task");
         return false;
     }
     
     lastWakeTime = xTaskGetTickCount();
+    
+    // Log successful task creation
+    webDebugServer.logInfo("ROS_TASK", "ROS communication task created successfully");
+    webDebugServer.logInfo("ROS_TASK", "Task handle: " + String((uintptr_t)taskHandle));
+    
     return true;
 }
 
@@ -144,6 +152,12 @@ void ROSCommTask::destroyTask() {
 void ROSCommTask::taskFunction() {
     // Initialize timing
     lastWakeTime = xTaskGetTickCount();
+    
+    // Log that the task is actually running
+    webDebugServer.logInfo("ROS_TASK", "ROS communication task function started executing");
+    
+    // Add a small delay to ensure system is stable before starting micro-ROS operations
+    vTaskDelay(pdMS_TO_TICKS(1000)); // 1 second delay
     
     while (isTaskRunning()) {
         uint32_t startTime = TimeUtils::getCurrentTimestampUs();
@@ -166,7 +180,18 @@ void ROSCommTask::taskFunction() {
 }
 
 bool ROSCommTask::startTask() {
-    return TaskInitializable::startTask();
+    webDebugServer.logInfo("ROS_TASK", "Starting ROS communication task...");
+    webDebugServer.logInfo("ROS_TASK", "Task handle before start: " + String((uintptr_t)taskHandle));
+    
+    bool result = TaskInitializable::startTask();
+    
+    if (result) {
+        webDebugServer.logInfo("ROS_TASK", "ROS communication task started successfully");
+    } else {
+        webDebugServer.logError("ROS_TASK", "Failed to start ROS communication task");
+    }
+    
+    return result;
 }
 
 void ROSCommTask::stopTask() {
@@ -179,6 +204,10 @@ bool ROSCommTask::isRunning() {
 
 
 void ROSCommTask::executeTaskLoop() {
+    // Add safety counter to prevent infinite loops
+    static uint32_t loopCounter = 0;
+    loopCounter++;
+    
     // Handle agent connection management
     handleAgentConnection();
     
@@ -186,18 +215,27 @@ void ROSCommTask::executeTaskLoop() {
     if (agentState == AGENT_CONNECTED) {
         processROS2Messages();
     }
+    
+    // Log every 1000 loops to show activity and prevent watchdog timeout
+    if (loopCounter % 1000 == 0) {
+        webDebugServer.logInfo("ROS_TASK", "Task loop running, count: " + String(loopCounter) + ", state: " + String(agentState));
+    }
 }
 
 bool ROSCommTask::createROS2Entities() {
+    webDebugServer.logInfo("ROS", "Creating ROS2 entities...");
+    
     // Create init_options
     rcl_ret_t ret = rclc_support_init(&support, 0, NULL, &allocator);
     if (ret != RCL_RET_OK) {
+        webDebugServer.logError("ROS", "Failed to initialize support, error: " + String(ret));
         return false;
     }
     
     // Create node
     ret = rclc_node_init_default(&node, "car_controller", "", &support);
     if (ret != RCL_RET_OK) {
+        webDebugServer.logError("ROS", "Failed to create node, error: " + String(ret));
         return false;
     }
     
@@ -319,6 +357,13 @@ void ROSCommTask::destroyROS2Entities() {
 void ROSCommTask::handleAgentConnection() {
     uint32_t currentTime = TimeUtils::getCurrentTimestampMs();
     
+    // Log agent state every 10 seconds for debugging
+    static uint32_t lastStateLog = 0;
+    if (currentTime - lastStateLog >= 10000) {
+        webDebugServer.logInfo("ROS", "Agent state: " + String(agentState) + ", time since last ping: " + String(currentTime - lastAgentPingTime));
+        lastStateLog = currentTime;
+    }
+    
     switch (agentState) {
         case WAITING_AGENT:
             // Blue slow blink = waiting for agent
@@ -326,9 +371,12 @@ void ROSCommTask::handleAgentConnection() {
             webDebugServer.updateROSStatus("Waiting for micro-ROS agent...");
             
             if (currentTime - lastAgentPingTime >= config.agent_ping_interval_ms) {
+                webDebugServer.logInfo("ROS", "Attempting to ping agent...");
                 if (pingAgent()) {
                     agentState = AGENT_AVAILABLE;
                     webDebugServer.logInfo("ROS", "Micro-ROS agent found");
+                } else {
+                    webDebugServer.logWarning("ROS", "Agent ping failed");
                 }
                 lastAgentPingTime = currentTime;
             }
@@ -502,7 +550,36 @@ void ROSCommTask::handleOdometryMessage(const nav_msgs__msg__Odometry* odom) {
 }
 
 bool ROSCommTask::pingAgent() {
-    return (RMW_RET_OK == rmw_uros_ping_agent(config.agent_ping_timeout_ms, 1));
+    // Add safety check to prevent crashes
+    if (config.agent_ping_timeout_ms == 0) {
+        webDebugServer.logError("ROS", "Agent ping timeout is 0, cannot ping");
+        return false;
+    }
+    
+    webDebugServer.logInfo("ROS", "Pinging agent with timeout: " + String(config.agent_ping_timeout_ms) + "ms");
+    
+    rmw_ret_t result = rmw_uros_ping_agent(config.agent_ping_timeout_ms, 1);
+    
+    // Log ping results for debugging
+    if (result != RMW_RET_OK) {
+        webDebugServer.logWarning("ROS", "Agent ping failed with code: " + String(result));
+        // Log common error codes for debugging
+        switch (result) {
+            case RMW_RET_TIMEOUT:
+                webDebugServer.logWarning("ROS", "Agent ping timeout - agent may not be running");
+                break;
+            case RMW_RET_ERROR:
+                webDebugServer.logWarning("ROS", "Agent ping error - communication issue");
+                break;
+            default:
+                webDebugServer.logWarning("ROS", "Agent ping unknown error: " + String(result));
+                break;
+        }
+    } else {
+        webDebugServer.logInfo("ROS", "Agent ping successful!");
+    }
+    
+    return (result == RMW_RET_OK);
 }
 
 void ROSCommTask::updateAgentState() {

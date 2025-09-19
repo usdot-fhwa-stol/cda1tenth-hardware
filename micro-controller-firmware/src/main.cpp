@@ -24,22 +24,24 @@
 USBCDC USBSerial;
 
 void setup() {
+  // Show setup started with LED
+  pinMode(2, OUTPUT); // Built-in LED
+  digitalWrite(2, HIGH); // Turn on built-in LED
+  
   // Initialize the entire system using the system initializer
   if (!initializeSystem()) {
-    // If initialization fails, we can't do much without USB
-    // The system initializer will have logged error messages
-    while (true) {
-      delay(1000); // Wait and retry
-      if (initializeSystem()) {
-        break;
-      }
-    }
+    // If initialization fails, just continue with limited functionality
+    // Don't retry to prevent boot loops
+    digitalWrite(2, LOW); // Turn off LED to show failure
+    delay(5000); // Wait 5 seconds before continuing
+  } else {
+    digitalWrite(2, LOW); // Turn off LED to show success
   }
   
-  // Log successful initialization via ROS logger
+  // Log successful initialization via ROS logger (if available)
   ROS_LOG_INFO("MAIN", "System initialization completed successfully");
   
-  // Log to web debug server
+  // Log to web debug server (if available)
   webDebugServer.logInfo("MAIN", "System initialization completed successfully");
   webDebugServer.updateSystemStatus("System initialized and running");
 }
@@ -51,10 +53,26 @@ void loop() {
   // Main loop now just monitors system health and provides status updates
   static uint32_t lastStatusUpdate = 0;
   static uint32_t lastWebUpdate = 0;
+  static uint32_t lastBlink = 0;
   uint32_t currentTime = millis();
+  
+  // Blink built-in LED every 2 seconds to show main loop is running
+  if (currentTime - lastBlink >= 2000) {
+    digitalWrite(2, !digitalRead(2)); // Toggle LED
+    lastBlink = currentTime;
+  }
   
   // Update web debug server every 2 seconds
   if (currentTime - lastWebUpdate >= 2000) {
+    // Add heartbeat message to verify web debug server is working
+    static uint32_t heartbeatCounter = 0;
+    heartbeatCounter++;
+    
+    // Add heartbeat message (with safety check)
+    if (heartbeatCounter % 10 == 0) { // Only log every 10th heartbeat to reduce load
+      webDebugServer.logInfo("MAIN", "Main loop heartbeat: " + String(heartbeatCounter));
+    }
+    
     // Update performance metrics for web interface
     ROSCommTask* rosTask = getROSCommTask();
     MultiCoreCar* motorCar = getMultiCoreCar();
