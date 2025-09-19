@@ -240,8 +240,8 @@ void initializeCar() {
     delay(100);
    
     // Initialize IMU - Use these calls to return values IMU.readFloatAccelX(), IMU.readFloatAccelY(), IMU.readFloatAccelZ(), IMU.readFloatGyroX(), IMU.readFloatGyroY(), IMU.readFloatGyroZ(), IMU.readTempF()
-    IMU.beginSPI(CS_IMU)
-    IMU.initialize(BASIC_SETTINGS)
+    IMU.beginSPI(CS_IMU);
+    IMU.initialize(BASIC_SETTINGS);
  
     // Initialize car control
     car.begin();
@@ -364,7 +364,7 @@ void setup() {
   delay(2000); // Give more time for serial to initialize
  
   // Configure Micro-ROS library to use USB CDC serial
-  set_microros_serial_transports(USBSerial);
+  // set_microros_serial_transports(USBSerial);
  
   state = WAITING_AGENT;  
   // motor_rpm_msg.data = 0;
@@ -375,7 +375,7 @@ void setup() {
   motor_rpm_msg.data.data = (float*)malloc(3 * sizeof(float));
 }
  
-float angle = 45.00f;
+float angle = 40.00f;
 uint32_t lastApplyMicros = micros();
  
 void testMotorControl() {
@@ -404,32 +404,32 @@ void testMotorControl() {
  
  
 void loop() {
-  switch (state) {
-    case WAITING_AGENT:
-      EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;);
-      break;
-    case AGENT_AVAILABLE:
-      state = (true == create_entities()) ? AGENT_CONNECTED : WAITING_AGENT;
-      if (state == WAITING_AGENT) {
-        destroy_entities();
-      };
-      break;
-    case AGENT_CONNECTED:
-      EXECUTE_EVERY_N_MS(200, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
-      if (state == AGENT_CONNECTED) {
-        rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
-      }
-      break;
-    case AGENT_DISCONNECTED:
-      destroy_entities();
-      state = WAITING_AGENT;
-      break;
-    default:
-      break;
-  }
+  // switch (state) {
+  //   case WAITING_AGENT:
+  //     EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;);
+  //     break;
+  //   case AGENT_AVAILABLE:
+  //     state = (true == create_entities()) ? AGENT_CONNECTED : WAITING_AGENT;
+  //     if (state == WAITING_AGENT) {
+  //       destroy_entities();
+  //     };
+  //     break;
+  //   case AGENT_CONNECTED:
+  //     EXECUTE_EVERY_N_MS(200, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
+  //     if (state == AGENT_CONNECTED) {
+  //       rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
+  //     }
+  //     break;
+  //   case AGENT_DISCONNECTED:
+  //     destroy_entities();
+  //     state = WAITING_AGENT;
+  //     break;
+  //   default:
+  //     break;
+  // }
  
   if (car_initialized) {
     car.updateControlLoops();
   }
-  // testMotorControl();
+  testMotorControl();
 }

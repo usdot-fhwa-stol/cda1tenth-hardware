@@ -8,7 +8,7 @@
 #include <micro_ros_platformio.h>
 #include "car.h"
 #include <rclc/executor.h>
-// #include <SparkFunLSM6DSO.h>
+#include <SparkFunLSM6DSO.h> 
 
 extern Car   car;
 extern bool  car_initialized;
