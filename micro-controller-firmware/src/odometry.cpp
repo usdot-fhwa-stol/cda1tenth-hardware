@@ -14,6 +14,7 @@ extern Car   car;
 extern bool  car_initialized;
 extern float g_wheelbase;   // meters
 extern LSM6DSO IMU;
+extern USBCDC USBSerial;
 
 nav_msgs__msg__Odometry s_odom_msg;
 
@@ -39,6 +40,7 @@ namespace {
   }
 
   void odom_timer_cb(rcl_timer_t *timer, int64_t) {
+    USBSerial.println("[ODOM] Timer callback triggered");
     if (timer == nullptr) return;
 
     uint32_t now_ms = millis();
