@@ -122,6 +122,7 @@ float getSteeringAngle(float omega, float vel) {
   if (omega == 0.0f || vel == 0.0f) {
     return 0.0f;
   }
+  return atanf(g_wheelbase * omega / vel) * 180.0f / M_PI;
 }
  
 void odom_callback(const void * msgin)
