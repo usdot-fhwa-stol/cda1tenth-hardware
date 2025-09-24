@@ -9,6 +9,7 @@
 #include "car.h"
 #include <rclc/executor.h>
 #include <SparkFunLSM6DSO.h> 
+#include <rclc_parameter/rclc_parameter.h>
 
 extern Car   car;
 extern bool  car_initialized;
@@ -23,12 +24,17 @@ namespace {
   rcl_publisher_t s_odom_pub;
   rcl_timer_t s_odom_timer;
 
+  rclc_parameter_server_t param_server;
+
   float carX = 0.0f;
   float carY = 0.0f;
   float carYaw = 0.0f;
   float wheel_radius = 0.03f;
 
   uint32_t s_last_ms = 0;
+  unsigned int odom_period_ms = 20;  // default refresh rate (ms)
+  rclc_support_t* s_support = nullptr;
+  rclc_executor_t* s_executor = nullptr;
 
   geometry_msgs__msg__Quaternion yaw_to_quaternion(float yaw_rad) {
     geometry_msgs__msg__Quaternion q;
@@ -84,8 +90,35 @@ namespace {
 
 }
 
+bool on_parameter_changed(const Parameter *old_param, const Parameter *new_param, void * /*context*/)
+{
+  if (strcmp(new_param->name.data, "wheelbase") == 0 && new_param->value.type == RCLC_PARAMETER_DOUBLE) {
+    g_wheelbase = (float)new_param->value.double_value;
+    USBSerial.printf("[ODOM] Wheelbase updated: %.3f\n", g_wheelbase);
+    return true;
+  }
+
+  if (strcmp(new_param->name.data, "odom_period_ms") == 0 && new_param->value.type == RCLC_PARAMETER_INT) {
+    odom_period_ms = (unsigned int)new_param->value.integer_value;
+    USBSerial.printf("[ODOM] Refresh period updated: %u ms\n", odom_period_ms);
+
+    // Reconfigure timer with new period
+    rcl_timer_fini(&s_odom_timer);
+    rclc_timer_init_default(&s_odom_timer, s_support,
+                            RCL_MS_TO_NS(odom_period_ms),
+                            odom_timer_cb);
+    rclc_executor_add_timer(s_executor, &s_odom_timer);
+    return true;
+  }
+  return false;
+}
+
+
 bool odometry_init(rcl_node_t* node, rclc_support_t* support, rclc_executor_t* executor)
 {
+  s_support = support;
+  s_executor = executor;
+
   rcl_ret_t rc = rclc_publisher_init_default(
       &s_odom_pub, node,
       ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
@@ -94,11 +127,24 @@ bool odometry_init(rcl_node_t* node, rclc_support_t* support, rclc_executor_t* e
 
   nav_msgs__msg__Odometry__init(&s_odom_msg);
 
-  const unsigned int period_ms = 20;
-  rc = rclc_timer_init_default(&s_odom_timer, support, RCL_MS_TO_NS(period_ms), odom_timer_cb);
+  rc = rclc_timer_init_default(&s_odom_timer, support,
+                               RCL_MS_TO_NS(odom_period_ms),
+                               odom_timer_cb);
   if (rc != RCL_RET_OK) return false;
-
   rc = rclc_executor_add_timer(executor, &s_odom_timer);
+
+  rclc_parameter_server_init_default(&param_server, node);
+
+  // Correct callback signature: old_param, new_param, context
+  rclc_executor_add_parameter_server(executor, &param_server, on_parameter_changed);
+
+  rclc_add_parameter(&param_server, "wheelbase", RCLC_PARAMETER_DOUBLE);
+  rclc_add_parameter(&param_server, "odom_period_ms", RCLC_PARAMETER_INT);
+
+  // Initialize params with defaults
+  rclc_parameter_set_double(&param_server, "wheelbase", g_wheelbase);
+  rclc_parameter_set_int(&param_server, "odom_period_ms", odom_period_ms);
+
   return rc == RCL_RET_OK;
 }
 
