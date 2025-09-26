@@ -16,6 +16,7 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 #include <rmw_microros/rmw_microros.h>
+#include <rclc_parameter/rclc_parameter.h>
  
 #include <geometry_msg/msg/vehicle_geometry.h>
 #include <geometry_msgs/msg/twist.h>
@@ -52,9 +53,16 @@ rcl_subscription_t geom_subscriber;
 geometry_msg__msg__VehicleGeometry geom_msg;
 geometry_msgs__msg__Twist twist_msg;
 
+rclc_parameter_server_t param_server;
+static double param_wheelbase = 0.185;
+unsigned int g_odom_period_ms = 20;
+float g_wheel_radius = 0.03;
+
 extern bool odometry_init(rcl_node_t* node, rclc_support_t* support, rclc_executor_t* executor);
 extern void odometry_fini(rcl_node_t* node);
 extern void odometry_reset(float x, float y, float yaw_rad);
+extern void odometry_set_period_ms(unsigned int period_ms);
+extern void odometry_set_wheel_radius(float r);
  
 static float g_odom_x = 0.f, g_odom_y = 0.f, g_odom_yaw = 0.f;
  
@@ -215,7 +223,29 @@ void initializeCar() {
     car_initialized = true;
   }
 }
- 
+
+static bool on_parameter_changed(const Parameter *old_p,
+                                 const Parameter *new_p,
+                                 void *)
+{
+  if (strcmp(new_p->name.data, "wheelbase") == 0 &&
+      new_p->value.type == RCLC_PARAMETER_DOUBLE) {
+    g_wheelbase = (float)new_p->value.double_value;
+    return true;
+  }
+  if (strcmp(new_p->name.data, "odom_period_ms") == 0 &&
+      new_p->value.type == RCLC_PARAMETER_INT) {
+    odometry_set_period_ms((unsigned int)new_p->value.integer_value);
+    return true;
+  }
+  if (strcmp(new_p->name.data, "wheel_radius") == 0 &&
+      new_p->value.type == RCLC_PARAMETER_DOUBLE) {
+    odometry_set_wheel_radius((float)new_p->value.double_value);
+    return true;
+  }
+  return false; // leave untouched if unknown/wrong type
+}
+
 bool create_entities()
 {
   allocator = rcl_get_default_allocator();
@@ -255,7 +285,7 @@ bool create_entities()
     motor_rpm_timer_callback));
  
   // num handles = total_of_subscribers + timers (publisher is not counted)
-  unsigned int number_of_handles = 5;
+  unsigned int number_of_handles = 9;
   executor = rclc_executor_get_zero_initialized_executor();
   RCCHECK(rclc_executor_init(&executor, &support.context, number_of_handles, &allocator));
   RCCHECK(rclc_executor_add_timer(&executor, &motor_rpm_timer));
@@ -266,7 +296,27 @@ bool create_entities()
     &twist_callback, ON_NEW_DATA));
   // Ensure spin_some returns promptly to keep the loop responsive
   rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(2));
- 
+
+  // Parameter server on this node
+  rclc_parameter_server_init_default(&param_server, &node);
+
+  // Put the server into the executor (so set/get requests are handled)
+  rclc_executor_add_parameter_server(&executor, &param_server, on_parameter_changed);
+
+  // Declare parameters
+  rclc_add_parameter(&param_server, "wheelbase",      RCLC_PARAMETER_DOUBLE);
+  rclc_add_parameter(&param_server, "odom_period_ms", RCLC_PARAMETER_INT);
+  rclc_add_parameter(&param_server, "wheel_radius",   RCLC_PARAMETER_DOUBLE);
+
+  // Set initial values (mirrors your current defaults)
+  rclc_parameter_set_double(&param_server, "wheelbase",      param_wheelbase);
+  rclc_parameter_set_int   (&param_server, "odom_period_ms", g_odom_period_ms);
+  rclc_parameter_set_double(&param_server, "wheel_radius",   g_wheel_radius);
+
+  // Push initial values into odometry
+  odometry_set_period_ms((unsigned)g_odom_period_ms);
+  odometry_set_wheel_radius((float)g_wheel_radius);
+
   if (!odometry_init(&node, &support, &executor)) {
     USBSerial.println("Failed to initialize odometry");
     return false;
@@ -292,6 +342,7 @@ void destroy_entities()
   rclc_executor_fini(&executor);
   rcl_node_fini(&node);
   rclc_support_fini(&support);
+  rclc_parameter_server_fini(&param_server, &node);
  
   odometry_fini(&node);
  

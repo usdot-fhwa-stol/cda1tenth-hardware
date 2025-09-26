@@ -8,8 +8,7 @@
 #include <micro_ros_platformio.h>
 #include "car.h"
 #include <rclc/executor.h>
-#include <SparkFunLSM6DSO.h> 
-#include <rclc_parameter/rclc_parameter.h>
+#include <SparkFunLSM6DSO.h>
 
 extern Car   car;
 extern bool  car_initialized;
@@ -17,24 +16,22 @@ extern float g_wheelbase;   // meters
 extern LSM6DSO IMU;
 extern USBCDC USBSerial;
 
-nav_msgs__msg__Odometry s_odom_msg;
-
 namespace {
 
   rcl_publisher_t s_odom_pub;
   rcl_timer_t s_odom_timer;
-
-  rclc_parameter_server_t param_server;
+  rclc_support_t* s_support = nullptr;
+  rclc_executor_t* s_executor = nullptr;
+  bool s_inited = false;
 
   float carX = 0.0f;
   float carY = 0.0f;
   float carYaw = 0.0f;
-  float wheel_radius = 0.03f;
+
+  float s_wheel_radius = 0.03f;
+  unsigned int s_period_ms = 20;
 
   uint32_t s_last_ms = 0;
-  unsigned int odom_period_ms = 20;  // default refresh rate (ms)
-  rclc_support_t* s_support = nullptr;
-  rclc_executor_t* s_executor = nullptr;
 
   geometry_msgs__msg__Quaternion yaw_to_quaternion(float yaw_rad) {
     geometry_msgs__msg__Quaternion q;
@@ -46,22 +43,19 @@ namespace {
   }
 
   void odom_timer_cb(rcl_timer_t *timer, int64_t) {
-    USBSerial.println("[ODOM] Timer callback triggered");
-    if (timer == nullptr) return;
+    if (!timer) return;
 
     uint32_t now_ms = millis();
     float dt = (s_last_ms == 0) ? 0.0f : (now_ms - s_last_ms) / 1000.0f;
     s_last_ms = now_ms;
 
     float wz = IMU.readFloatGyroZ() * (M_PI / 180.0f);
-
     carYaw += wz * dt;
 
     float right_rpm = car.getRightMotorRPM();
     float left_rpm  = car.getLeftMotorRPM();
     float avg_rpm   = 0.5f * (right_rpm + left_rpm);
-
-    float v = (avg_rpm / 60.0f) * 2.0f * M_PI * wheel_radius;
+    float v = (avg_rpm / 60.0f) * 2.0f * M_PI * s_wheel_radius;
 
     carX += v * cosf(carYaw) * dt;
     carY += v * sinf(carYaw) * dt;
@@ -71,7 +65,7 @@ namespace {
 
     rosidl_runtime_c__String__assign(&odom.header.frame_id, "odom");
     rosidl_runtime_c__String__assign(&odom.child_frame_id, "base_link");
-    
+
     odom.pose.pose.position.x = carX;
     odom.pose.pose.position.y = carY;
     odom.pose.pose.orientation = yaw_to_quaternion(carYaw);
@@ -80,84 +74,61 @@ namespace {
     odom.pose.covariance[7]  = 0.2;
     odom.pose.covariance[35] = 0.4;
 
-    odom.twist.twist.linear.x = v;
+    odom.twist.twist.linear.x  = v;
     odom.twist.twist.angular.z = wz;
 
     (void) rcl_publish(&s_odom_pub, &odom, nullptr);
-
     nav_msgs__msg__Odometry__fini(&odom);
   }
-
-}
-
-bool on_parameter_changed(const Parameter *old_param, const Parameter *new_param, void * /*context*/)
-{
-  if (strcmp(new_param->name.data, "wheelbase") == 0 && new_param->value.type == RCLC_PARAMETER_DOUBLE) {
-    g_wheelbase = (float)new_param->value.double_value;
-    USBSerial.printf("[ODOM] Wheelbase updated: %.3f\n", g_wheelbase);
-    return true;
-  }
-
-  if (strcmp(new_param->name.data, "odom_period_ms") == 0 && new_param->value.type == RCLC_PARAMETER_INT) {
-    odom_period_ms = (unsigned int)new_param->value.integer_value;
-    USBSerial.printf("[ODOM] Refresh period updated: %u ms\n", odom_period_ms);
-
-    // Reconfigure timer with new period
-    rcl_timer_fini(&s_odom_timer);
-    rclc_timer_init_default(&s_odom_timer, s_support,
-                            RCL_MS_TO_NS(odom_period_ms),
-                            odom_timer_cb);
-    rclc_executor_add_timer(s_executor, &s_odom_timer);
-    return true;
-  }
-  return false;
-}
-
+} // namespace
 
 bool odometry_init(rcl_node_t* node, rclc_support_t* support, rclc_executor_t* executor)
 {
-  s_support = support;
+  s_support  = support;
   s_executor = executor;
 
-  rcl_ret_t rc = rclc_publisher_init_default(
-      &s_odom_pub, node,
-      ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
-      "odom");
-  if (rc != RCL_RET_OK) return false;
+  if (rclc_publisher_init_default(
+        &s_odom_pub, node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
+        "odom") != RCL_RET_OK) return false;
 
-  nav_msgs__msg__Odometry__init(&s_odom_msg);
+  if (rclc_timer_init_default(
+        &s_odom_timer, support, RCL_MS_TO_NS(s_period_ms), odom_timer_cb) != RCL_RET_OK) return false;
 
-  rc = rclc_timer_init_default(&s_odom_timer, support,
-                               RCL_MS_TO_NS(odom_period_ms),
-                               odom_timer_cb);
-  if (rc != RCL_RET_OK) return false;
-  rc = rclc_executor_add_timer(executor, &s_odom_timer);
+  if (rclc_executor_add_timer(executor, &s_odom_timer) != RCL_RET_OK) return false;
 
-  rclc_parameter_server_init_default(&param_server, node);
-
-  // Correct callback signature: old_param, new_param, context
-  rclc_executor_add_parameter_server(executor, &param_server, on_parameter_changed);
-
-  rclc_add_parameter(&param_server, "wheelbase", RCLC_PARAMETER_DOUBLE);
-  rclc_add_parameter(&param_server, "odom_period_ms", RCLC_PARAMETER_INT);
-
-  // Initialize params with defaults
-  rclc_parameter_set_double(&param_server, "wheelbase", g_wheelbase);
-  rclc_parameter_set_int(&param_server, "odom_period_ms", odom_period_ms);
-
-  return rc == RCL_RET_OK;
+  s_inited = true;
+  s_last_ms = 0;
+  return true;
 }
 
 void odometry_fini(rcl_node_t* node)
 {
   (void) rcl_timer_fini(&s_odom_timer);
   (void) rcl_publisher_fini(&s_odom_pub, node);
-  nav_msgs__msg__Odometry__fini(&s_odom_msg);
+  s_inited = false;
 }
 
 void odometry_reset(float x, float y, float yaw_rad)
 {
-  carX = (double)x;
-  carY = (double)y;
-  carYaw = (double)yaw_rad;
+  carX = x;
+  carY = y;
+  carYaw = yaw_rad;
+  s_last_ms = 0;
+}
+
+void odometry_set_period_ms(unsigned int period_ms)
+{
+  s_period_ms = period_ms;
+  if (s_inited && s_support && s_executor) {
+    (void) rcl_timer_fini(&s_odom_timer);
+    (void) rclc_timer_init_default(&s_odom_timer, s_support, RCL_MS_TO_NS(s_period_ms), odom_timer_cb);
+    (void) rclc_executor_add_timer(s_executor, &s_odom_timer);
+    s_last_ms = 0;
+  }
+}
+
+void odometry_set_wheel_radius(float r)
+{
+  s_wheel_radius = r;
 }

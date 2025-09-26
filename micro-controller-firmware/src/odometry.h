@@ -11,3 +11,6 @@ bool odometry_init(rcl_node_t* node, rclc_support_t* support, rclc_executor_t* e
 void odometry_fini(rcl_node_t* node);
 
 void odometry_reset(float x, float y, float yaw_rad);
+
+void odometry_set_period_ms(unsigned int period_ms);
+void odometry_set_wheel_radius(float r);

@@ -37,3 +37,20 @@ source install/local_setup.bash
 ros2 run micro_ros_agent micro_ros_agent serial --dev $DEVICE -b $BAUD
 ```
 
+3. Testing Odometry Publisher
+```bash
+ros2 topic list
+
+ros2 topic echo /odom
+```
+
+4. Testing ROS Parameters
+```bash
+ros2 param set  /car_controller wheel_radius <value>
+ros2 param set  /car_controller wheelbase <value>
+ros2 param set  /car_controller odom_period_ms <value>
+
+ros2 param get /car_controller wheel_radius
+ros2 param get  /car_controller wheelbase 
+ros2 param get  /car_controller odom_period_ms 
+```
