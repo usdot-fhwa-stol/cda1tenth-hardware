@@ -29,6 +29,7 @@
 #include "car.h"
  
 #define CS_IMU      14
+#define LED_PIN     15
  
 #define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){return false;}}
 #define EXECUTE_EVERY_N_MS(MS, X)  do { \
@@ -55,7 +56,7 @@ geometry_msgs__msg__Twist twist_msg;
 
 // rclc_parameter_server_t param_server;
 // static double param_wheelbase = 0.185;
-unsigned int g_odom_period_ms = 20;
+unsigned int g_odom_period_ms = 100; // 10Hz odometry for maximum stability
 float g_wheel_radius = 0.03;
 
 extern bool odometry_init(rcl_node_t* node, rclc_support_t* support, rclc_executor_t* executor);
@@ -99,32 +100,76 @@ typedef enum {
  
 static volatile agent_state_t state = WAITING_AGENT; // Shared between tasks
 static SemaphoreHandle_t stateMutex;
+
+// LED status variables
+static uint32_t last_led_update = 0;
+static uint32_t led_blink_count = 0;
  
 typedef struct {
   TickType_t last_wake_time;
   TickType_t interval_ticks;
 } periodic_task_t;
- 
-void motor_rpm_timer_callback(rcl_timer_t * timer, int64_t last_call_time)
-{
-  (void) last_call_time;
-  if (timer != NULL && car_initialized) {
-    // Get motor RPMs
-    float right_rpm = car.getRightMotorRPM();
-    float left_rpm = car.getLeftMotorRPM();
-    float steering_angle = car.steeringMotor.getSteeringAngle();
-   
-    // Set up the message
-    motor_rpm_msg.data.size = 3;
-    motor_rpm_msg.data.data[0] = right_rpm;
-    motor_rpm_msg.data.data[1] = left_rpm;
-    motor_rpm_msg.data.data[2] = steering_angle; // Add steering angle to the message
-   
-    // Publish motor RPM data
-    rcl_publish(&motor_rpm_publisher, &motor_rpm_msg, NULL);
-   
+
+// LED status update function
+void updateLEDStatus() {
+  uint32_t now = millis();
+  if (now - last_led_update < 100) return; // Update every 100ms
+  last_led_update = now;
+  
+  switch (state) {
+    case WAITING_AGENT:
+      // Slow blink (1 second on, 1 second off)
+      digitalWrite(LED_PIN, (led_blink_count / 10) % 2);
+      break;
+    case AGENT_AVAILABLE:
+      // Fast blink (200ms on, 200ms off)
+      digitalWrite(LED_PIN, (led_blink_count / 2) % 2);
+      break;
+    case AGENT_CONNECTED:
+      // Solid on
+      digitalWrite(LED_PIN, HIGH);
+      break;
+    case AGENT_DISCONNECTED:
+      // Double blink pattern
+      digitalWrite(LED_PIN, (led_blink_count / 5) % 4 < 2);
+      break;
+    default:
+      digitalWrite(LED_PIN, LOW);
+      break;
   }
+  led_blink_count++;
 }
+ 
+// Motor RPM timer callback disabled for stability
+// void motor_rpm_timer_callback(rcl_timer_t * timer, int64_t last_call_time)
+// {
+//   (void) last_call_time;
+//   if (timer != NULL && car_initialized) {
+//     // Use cached values from car control task to avoid blocking SPI
+//     static float cached_right_rpm = 0.0f;
+//     static float cached_left_rpm = 0.0f;
+//     static float cached_steering_angle = 0.0f;
+//     static uint32_t last_update = 0;
+//     
+//     // Only update cache every 50ms to reduce SPI blocking
+//     uint32_t now = millis();
+//     if (now - last_update > 50) {
+//       cached_right_rpm = car.getRightMotorRPM();
+//       cached_left_rpm = car.getLeftMotorRPM();
+//       cached_steering_angle = car.steeringMotor.getSteeringAngle();
+//       last_update = now;
+//     }
+//    
+//     // Set up the message
+//     motor_rpm_msg.data.size = 3;
+//     motor_rpm_msg.data.data[0] = cached_right_rpm;
+//     motor_rpm_msg.data.data[1] = cached_left_rpm;
+//     motor_rpm_msg.data.data[2] = cached_steering_angle;
+//    
+//     // Publish motor RPM data
+//     rcl_publish(&motor_rpm_publisher, &motor_rpm_msg, NULL);
+//   }
+// }
  
 float getSteeringAngle(float omega, float vel) {
   if (omega == 0.0f || vel == 0.0f) {
@@ -134,13 +179,16 @@ float getSteeringAngle(float omega, float vel) {
 }
  
 void twist_callback(const void * msgin) {
+  if (!car_initialized) return; // Don't process if car not ready
+  
   const auto * twist = static_cast<const geometry_msgs__msg__Twist *>(msgin);
  
   // Use bicycle model for proper steering angle calculation
   float steering_angle_deg = getSteeringAngle(twist->angular.z, twist->linear.x);
   float speed_rpm = twist->linear.x * o_speed_scaling_factor * 60.0f / (M_PI * 0.06f);
  
-  // Update car control
+  // Update car control without mutex to avoid blocking
+  // This is safe since we're not running control loops
   car.setSteeringAngle(steering_angle_deg);
   car.setSpeed(speed_rpm, g_wheelbase, g_track_width);
 }
@@ -256,12 +304,12 @@ bool create_entities()
   // create node
   RCCHECK(rclc_node_init_default(&node, "car_controller", "", &support));
  
-  // create motor RPM publisher
-  RCCHECK(rclc_publisher_init_best_effort(
-    &motor_rpm_publisher,
-    &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-    "motor_rpms"));
+  // Motor RPM publisher disabled for stability
+  // RCCHECK(rclc_publisher_init_best_effort(
+  //   &motor_rpm_publisher,
+  //   &node,
+  //   ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+  //   "motor_rpms"));
  
   // create subscriber for vehicle geometry
   RCCHECK(rclc_subscription_init_best_effort(
@@ -276,26 +324,29 @@ bool create_entities()
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
     "cmd_vel"));
  
-  // create motor RPM timer (publish every 100ms)
-  const unsigned int motor_rpm_timer_timeout = 100;
-  RCCHECK(rclc_timer_init_default(
-    &motor_rpm_timer,
-    &support,
-    RCL_MS_TO_NS(motor_rpm_timer_timeout),
-    motor_rpm_timer_callback));
+  // Motor RPM timer disabled for stability
+  // const unsigned int motor_rpm_timer_timeout = 100;
+  // RCCHECK(rclc_timer_init_default(
+  //   &motor_rpm_timer,
+  //   &support,
+  //   RCL_MS_TO_NS(motor_rpm_timer_timeout),
+  //   motor_rpm_timer_callback));
  
   // num handles = total_of_subscribers + timers (publisher is not counted)
-  unsigned int number_of_handles = 9;
+  // 2 subscriptions + 0 timers = 2 handles initially
+  // odometry_init will add 1 more timer = 3 total handles
+  unsigned int number_of_handles = 3;
   executor = rclc_executor_get_zero_initialized_executor();
   RCCHECK(rclc_executor_init(&executor, &support.context, number_of_handles, &allocator));
-  RCCHECK(rclc_executor_add_timer(&executor, &motor_rpm_timer));
+  // Motor RPM timer disabled
+  // RCCHECK(rclc_executor_add_timer(&executor, &motor_rpm_timer));
   RCCHECK(rclc_executor_add_subscription(&executor, &geom_subscriber, &geom_msg,
     &vehicle_geometry_callback, ON_NEW_DATA));
   RCCHECK(rclc_executor_add_subscription(
     &executor, &twist_subscriber, &twist_msg,
     &twist_callback, ON_NEW_DATA));
   // Ensure spin_some returns promptly to keep the loop responsive
-  rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(2));
+  rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(50)); // Much more generous for stability
 
   // Parameter server on this node
   // rclc_parameter_server_init_default(&param_server, &node);
@@ -335,10 +386,12 @@ void destroy_entities()
   rmw_context_t * rmw_context = rcl_context_get_rmw_context(&support.context);
   (void) rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
  
-  rcl_publisher_fini(&motor_rpm_publisher, &node);
+  // Motor RPM publisher disabled
+  // rcl_publisher_fini(&motor_rpm_publisher, &node);
   rcl_subscription_fini(&geom_subscriber, &node);
   rcl_subscription_fini(&twist_subscriber, &node);
-  rcl_timer_fini(&motor_rpm_timer);
+  // Motor RPM timer disabled
+  // rcl_timer_fini(&motor_rpm_timer);
   rclc_executor_fini(&executor);
   rcl_node_fini(&node);
   rclc_support_fini(&support);
@@ -346,17 +399,21 @@ void destroy_entities()
  
   odometry_fini(&node);
  
-  // Free allocated memory
-  if (motor_rpm_msg.data.data != NULL) {
-    free(motor_rpm_msg.data.data);
-    motor_rpm_msg.data.data = NULL;
-  }
+  // Motor RPM message disabled - no memory to free
+  // if (motor_rpm_msg.data.data != NULL) {
+  //   free(motor_rpm_msg.data.data);
+  //   motor_rpm_msg.data.data = NULL;
+  // }
 }
  
 void setup() {
+  // Initialize LED pin for status indication
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+  
   // Initialize the car control system
   initializeCar();
- 
+
   // Initialize USB CDC
   USB.begin();
   USBSerial.begin(921600);
@@ -374,10 +431,10 @@ void setup() {
   state = WAITING_AGENT;  
   // motor_rpm_msg.data = 0;
  
-  // Initialize motor RPM message
-  motor_rpm_msg.data.size = 3;
-  motor_rpm_msg.data.capacity = 3;
-  motor_rpm_msg.data.data = (float*)malloc(3 * sizeof(float));
+  // Motor RPM message disabled for stability
+  // motor_rpm_msg.data.size = 3;
+  // motor_rpm_msg.data.capacity = 3;
+  // motor_rpm_msg.data.data = (float*)malloc(3 * sizeof(float));
 }
  
 float angle = 40.00f;
@@ -409,6 +466,18 @@ void testMotorControl() {
  
  
 void loop() {
+  static uint32_t last_loop_time = 0;
+  uint32_t current_time = millis();
+  
+  // Simple watchdog - if loop takes too long, something is blocking
+  if (current_time - last_loop_time > 1000) {
+    // System might be frozen, try to recover
+    if (state == AGENT_CONNECTED) {
+      state = AGENT_DISCONNECTED; // Force reconnection
+    }
+  }
+  last_loop_time = current_time;
+  
   switch (state) {
     case WAITING_AGENT:
       EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;);
@@ -420,9 +489,9 @@ void loop() {
       };
       break;
     case AGENT_CONNECTED:
-      EXECUTE_EVERY_N_MS(200, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
+      EXECUTE_EVERY_N_MS(2000, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
       if (state == AGENT_CONNECTED) {
-        rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
+        rclc_executor_spin_some(&executor, RCL_MS_TO_NS(50));
       }
       break;
     case AGENT_DISCONNECTED:
@@ -432,9 +501,18 @@ void loop() {
     default:
       break;
   }
- 
-  if (car_initialized) {
-    car.updateControlLoops();
-  }
-  // testMotorControl();
+
+  // Update LED status to show micro-ROS connection state
+  updateLEDStatus();
+  
+  // Disable control loops completely to prevent blocking ROS
+  // Control loops are too heavy and block the executor
+  // static uint32_t last_control_update = 0;
+  // uint32_t now = millis();
+  // if (car_initialized && (now - last_control_update > 50)) {
+  //   car.updateControlLoops();
+  //   last_control_update = now;
+  // }
+  
+  // No delay - maximum responsiveness for ROS
 }

@@ -43,28 +43,45 @@ namespace {
   }
 
   void odom_timer_cb(rcl_timer_t *timer, int64_t) {
-    if (!timer) return;
+    if (!timer || !car_initialized) return;
 
     uint32_t now_ms = millis();
     float dt = (s_last_ms == 0) ? 0.0f : (now_ms - s_last_ms) / 1000.0f;
     s_last_ms = now_ms;
 
-    float wz = IMU.readFloatGyroZ() * (M_PI / 180.0f);
-    carYaw += wz * dt;
-
-    float right_rpm = car.getRightMotorRPM();
-    float left_rpm  = car.getLeftMotorRPM();
-    float avg_rpm   = 0.5f * (right_rpm + left_rpm);
+    // Use static cached values to avoid ANY blocking operations
+    static float cached_gyro_z = 0.0f;
+    static float cached_right_rpm = 0.0f;
+    static float cached_left_rpm = 0.0f;
+    static uint32_t last_sensor_read = 0;
+    
+    // Only read sensors every 200ms to minimize blocking
+    if (now_ms - last_sensor_read > 200) {
+      // These operations are still blocking but much less frequent
+      cached_gyro_z = IMU.readFloatGyroZ() * (M_PI / 180.0f);
+      cached_right_rpm = car.getRightMotorRPM();
+      cached_left_rpm = car.getLeftMotorRPM();
+      last_sensor_read = now_ms;
+    }
+    
+    carYaw += cached_gyro_z * dt;
+    
+    float avg_rpm = 0.5f * (cached_right_rpm + cached_left_rpm);
     float v = (avg_rpm / 60.0f) * 2.0f * M_PI * s_wheel_radius;
 
     carX += v * cosf(carYaw) * dt;
     carY += v * sinf(carYaw) * dt;
 
-    nav_msgs__msg__Odometry odom;
-    nav_msgs__msg__Odometry__init(&odom);
-
-    rosidl_runtime_c__String__assign(&odom.header.frame_id, "odom");
-    rosidl_runtime_c__String__assign(&odom.child_frame_id, "base_link");
+    // Use static message to avoid repeated allocation/deallocation
+    static nav_msgs__msg__Odometry odom;
+    static bool odom_initialized = false;
+    
+    if (!odom_initialized) {
+      nav_msgs__msg__Odometry__init(&odom);
+      rosidl_runtime_c__String__assign(&odom.header.frame_id, "odom");
+      rosidl_runtime_c__String__assign(&odom.child_frame_id, "base_link");
+      odom_initialized = true;
+    }
 
     odom.pose.pose.position.x = carX;
     odom.pose.pose.position.y = carY;
@@ -75,10 +92,9 @@ namespace {
     odom.pose.covariance[35] = 0.4;
 
     odom.twist.twist.linear.x  = v;
-    odom.twist.twist.angular.z = wz;
+    odom.twist.twist.angular.z = cached_gyro_z;
 
     (void) rcl_publish(&s_odom_pub, &odom, nullptr);
-    nav_msgs__msg__Odometry__fini(&odom);
   }
 } // namespace
 
