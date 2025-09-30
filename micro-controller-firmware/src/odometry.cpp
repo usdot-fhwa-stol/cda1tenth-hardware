@@ -49,8 +49,7 @@ namespace {
     // Debug counter
     odom_publish_count++;
     
-    // Log debug info (throttled by logDebug function)
-    logDebug("odom");
+    // Debug logging removed from odometry callback to prevent spam
 
     uint32_t now_ms = millis();
     float dt = (s_last_ms == 0) ? 0.0f : (now_ms - s_last_ms) / 1000.0f;

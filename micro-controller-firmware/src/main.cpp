@@ -157,14 +157,29 @@ void logDebug(const char* message) {
     static uint32_t last_debug_time = 0;
     uint32_t now = millis();
     
-    // Only publish debug messages every 2 seconds to avoid spam
-    if (now - last_debug_time > 2000) {
-      debug_msg.data.size = 3;
-      debug_msg.data.data[0] = (float)twist_callback_count;
-      debug_msg.data.data[1] = (float)odom_publish_count;
-      debug_msg.data.data[2] = (float)state;
-      rcl_publish(&debug_publisher, &debug_msg, NULL);
-      last_debug_time = now;
+    // Only publish debug messages every 5 seconds to avoid spam (increased from 2s)
+    if (now - last_debug_time > 5000) {
+      // Ensure data array is allocated
+      if (debug_msg.data.data == NULL) {
+        debug_msg.data.data = (float*)malloc(3 * sizeof(float));
+        debug_msg.data.capacity = 3;
+      }
+      
+      if (debug_msg.data.data != NULL) {
+        debug_msg.data.size = 3;
+        debug_msg.data.data[0] = (float)twist_callback_count;
+        debug_msg.data.data[1] = (float)odom_publish_count;
+        debug_msg.data.data[2] = (float)state;
+        
+        // Use non-blocking publish
+        rcl_ret_t ret = rcl_publish(&debug_publisher, &debug_msg, NULL);
+        if (ret != RCL_RET_OK) {
+          // If publish fails, don't try again immediately
+          last_debug_time = now + 1000; // Wait extra second on failure
+        } else {
+          last_debug_time = now;
+        }
+      }
     }
   }
 }
@@ -220,8 +235,7 @@ void twist_callback(const void * msgin) {
   float steering_angle_deg = getSteeringAngle(twist->angular.z, twist->linear.x);
   float speed_rpm = twist->linear.x * o_speed_scaling_factor * 60.0f / (M_PI * 0.06f);
  
-  // Log debug info (throttled by logDebug function)
-  logDebug("cmd_vel");
+  // Debug logging removed from twist callback to prevent spam
  
   // Update car control without mutex to avoid blocking
   // This is safe since we're not running control loops
@@ -436,6 +450,13 @@ void destroy_entities()
   // Motor RPM timer disabled
   // rcl_timer_fini(&motor_rpm_timer);
   rcl_publisher_fini(&debug_publisher, &node);
+  
+  // Clean up debug message memory
+  if (debug_msg.data.data != NULL) {
+    free(debug_msg.data.data);
+    debug_msg.data.data = NULL;
+  }
+  
   rclc_executor_fini(&executor);
   rcl_node_fini(&node);
   rclc_support_fini(&support);
@@ -482,6 +503,11 @@ void setup() {
  
   state = WAITING_AGENT;  
   // motor_rpm_msg.data = 0;
+  
+  // Initialize debug message
+  debug_msg.data.size = 0;
+  debug_msg.data.capacity = 0;
+  debug_msg.data.data = NULL;
  
   // Motor RPM message disabled for stability
   // motor_rpm_msg.data.size = 3;
@@ -557,9 +583,16 @@ void loop() {
   // Update LED status to show micro-ROS connection state
   updateLEDStatus();
   
+  // Debug logging - only in main loop, properly throttled
+  static uint32_t last_debug_output = 0;
+  uint32_t now = millis();
+  if (now - last_debug_output > 10000) { // Every 10 seconds
+    logDebug("status");
+    last_debug_output = now;
+  }
+  
   // Run control loops with much longer intervals to prevent blocking ROS
   static uint32_t last_control_update = 0;
-  uint32_t now = millis();
   if (car_initialized && (now - last_control_update > 200)) { // Every 200ms
     car.updateControlLoops();
     last_control_update = now;
