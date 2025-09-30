@@ -52,11 +52,7 @@ namespace {
     // Log odometry publishing (every 10th publish to avoid spam)
     if (odom_publish_count % 10 == 0) {
       extern void logDebug(const char* message);
-      char odom_buffer[64];
-      snprintf(odom_buffer, sizeof(odom_buffer), 
-               "odom: x=%.2f, y=%.2f, yaw=%.2f, count=%lu", 
-               carX, carY, carYaw, odom_publish_count);
-      logDebug(odom_buffer);
+      logDebug("odom");
     }
 
     uint32_t now_ms = millis();

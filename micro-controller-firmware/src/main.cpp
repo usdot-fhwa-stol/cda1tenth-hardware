@@ -51,7 +51,7 @@ std_msgs__msg__Float32MultiArray motor_rpm_msg;
 
 // Debug publisher
 rcl_publisher_t debug_publisher;
-std_msgs__msg__String debug_msg;
+std_msgs__msg__Float32MultiArray debug_msg;
  
 // Additional ROS2 objects
 rcl_subscription_t geom_subscriber;
@@ -151,7 +151,12 @@ void updateLEDStatus() {
 // Debug logging function
 void logDebug(const char* message) {
   if (state == AGENT_CONNECTED) {
-    rosidl_runtime_c__String__assign(&debug_msg.data, message);
+    // Convert string to float array for debug logging
+    // We'll use a simple approach: send debug counters as float array
+    debug_msg.data.size = 3;
+    debug_msg.data.data[0] = (float)twist_callback_count;
+    debug_msg.data.data[1] = (float)odom_publish_count;
+    debug_msg.data.data[2] = (float)state;
     rcl_publish(&debug_publisher, &debug_msg, NULL);
   }
 }
@@ -198,7 +203,6 @@ void twist_callback(const void * msgin) {
   twist_callback_count++; // Debug counter
   
   if (!car_initialized) {
-    logDebug("twist_callback: car not initialized");
     return; // Don't process if car not ready
   }
   
@@ -208,12 +212,8 @@ void twist_callback(const void * msgin) {
   float steering_angle_deg = getSteeringAngle(twist->angular.z, twist->linear.x);
   float speed_rpm = twist->linear.x * o_speed_scaling_factor * 60.0f / (M_PI * 0.06f);
  
-  // Log the received command
-  char cmd_buffer[64];
-  snprintf(cmd_buffer, sizeof(cmd_buffer), 
-           "cmd_vel: v=%.2f, w=%.2f, angle=%.1f, rpm=%.1f", 
-           twist->linear.x, twist->angular.z, steering_angle_deg, speed_rpm);
-  logDebug(cmd_buffer);
+  // Log the received command (just increment counter)
+  logDebug("cmd_vel");
  
   // Update car control without mutex to avoid blocking
   // This is safe since we're not running control loops
@@ -343,7 +343,7 @@ bool create_entities()
   RCCHECK(rclc_publisher_init_best_effort(
     &debug_publisher,
     &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
     "debug_log"));
  
   // create subscriber for vehicle geometry
@@ -553,11 +553,7 @@ void loop() {
   static uint32_t last_debug_output = 0;
   uint32_t now = millis();
   if (now - last_debug_output > 5000) {
-    char debug_buffer[128];
-    snprintf(debug_buffer, sizeof(debug_buffer), 
-             "Debug: twist_calls=%lu, odom_pubs=%lu, state=%d", 
-             twist_callback_count, odom_publish_count, state);
-    logDebug(debug_buffer);
+    logDebug("debug"); // This will send the counters
     last_debug_output = now;
   }
   
