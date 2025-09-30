@@ -27,7 +27,6 @@
  
 // Include car control logic
 #include "car.h"
-#include "debug.h"
  
 #define CS_IMU      14
 #define LED_PIN     37
@@ -50,7 +49,7 @@ rcl_subscription_t twist_subscriber;
 rcl_publisher_t motor_rpm_publisher;
 std_msgs__msg__Float32MultiArray motor_rpm_msg;
 
-// Debug publisher
+// Debug publisher - using simple approach
 rcl_publisher_t debug_publisher;
 std_msgs__msg__Float32MultiArray debug_msg;
  
@@ -111,8 +110,8 @@ static uint32_t last_led_update = 0;
 static uint32_t led_blink_count = 0;
 
 // Debug counters
-uint32_t twist_callback_count = 0;
-uint32_t odom_publish_count = 0;
+static uint32_t twist_callback_count = 0;
+static uint32_t odom_publish_count = 0;
  
 typedef struct {
   TickType_t last_wake_time;
@@ -149,16 +148,23 @@ void updateLEDStatus() {
   led_blink_count++;
 }
 
-// Debug logging function
+// Debug logging function - with proper timing and connection checks
 void logDebug(const char* message) {
-  if (state == AGENT_CONNECTED) {
-    // Convert string to float array for debug logging
-    // We'll use a simple approach: send debug counters as float array
-    debug_msg.data.size = 3;
-    debug_msg.data.data[0] = (float)twist_callback_count;
-    debug_msg.data.data[1] = (float)odom_publish_count;
-    debug_msg.data.data[2] = (float)state;
-    rcl_publish(&debug_publisher, &debug_msg, NULL);
+  // Only publish if connection is stable and we're not in the middle of setup
+  if (state == AGENT_CONNECTED && car_initialized) {
+    // Throttle debug messages to prevent overwhelming the system
+    static uint32_t last_debug_time = 0;
+    uint32_t now = millis();
+    
+    // Only publish debug messages every 2 seconds to avoid spam
+    if (now - last_debug_time > 2000) {
+      debug_msg.data.size = 3;
+      debug_msg.data.data[0] = (float)twist_callback_count;
+      debug_msg.data.data[1] = (float)odom_publish_count;
+      debug_msg.data.data[2] = (float)state;
+      rcl_publish(&debug_publisher, &debug_msg, NULL);
+      last_debug_time = now;
+    }
   }
 }
  
@@ -201,7 +207,7 @@ float getSteeringAngle(float omega, float vel) {
 }
  
 void twist_callback(const void * msgin) {
-  twist_callback_count++; // Debug counter
+  twist_callback_count++; // Increment counter
   
   if (!car_initialized) {
     return; // Don't process if car not ready
@@ -213,7 +219,7 @@ void twist_callback(const void * msgin) {
   float steering_angle_deg = getSteeringAngle(twist->angular.z, twist->linear.x);
   float speed_rpm = twist->linear.x * o_speed_scaling_factor * 60.0f / (M_PI * 0.06f);
  
-  // Log the received command (just increment counter)
+  // Log debug info (throttled by logDebug function)
   logDebug("cmd_vel");
  
   // Update car control without mutex to avoid blocking
@@ -550,17 +556,10 @@ void loop() {
   // Update LED status to show micro-ROS connection state
   updateLEDStatus();
   
-  // Debug output every 5 seconds via ROS topic
-  static uint32_t last_debug_output = 0;
-  uint32_t now = millis();
-  if (now - last_debug_output > 5000) {
-    logDebug("debug"); // This will send the counters
-    last_debug_output = now;
-  }
-  
   // Run control loops with much longer intervals to prevent blocking ROS
   static uint32_t last_control_update = 0;
-  if (car_initialized && (now - last_control_update > 200)) { // Every 200ms instead of 50ms
+  uint32_t now = millis();
+  if (car_initialized && (now - last_control_update > 200)) { // Every 200ms
     car.updateControlLoops();
     last_control_update = now;
   }
