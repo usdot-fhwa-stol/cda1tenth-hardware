@@ -112,6 +112,11 @@ typedef struct {
 
 // LED status update function
 void updateLEDStatus() {
+  // For testing - keep LED ON by default
+  digitalWrite(LED_PIN, HIGH);
+  
+  // Original status code (commented out for testing)
+  /*
   uint32_t now = millis();
   if (now - last_led_update < 100) return; // Update every 100ms
   last_led_update = now;
@@ -138,6 +143,7 @@ void updateLEDStatus() {
       break;
   }
   led_blink_count++;
+  */
 }
  
 // Motor RPM timer callback disabled for stability
@@ -409,7 +415,15 @@ void destroy_entities()
 void setup() {
   // Initialize LED pin for status indication
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
+  
+  // LED test pattern - blink 3 times to confirm it's working
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(200);
+    digitalWrite(LED_PIN, LOW);
+    delay(200);
+  }
+  digitalWrite(LED_PIN, HIGH); // Keep LED on for testing
   
   // Initialize the car control system
   initializeCar();
