@@ -551,6 +551,7 @@ void loop() {
   
   // Debug output every 5 seconds via ROS topic
   static uint32_t last_debug_output = 0;
+  uint32_t now = millis();
   if (now - last_debug_output > 5000) {
     char debug_buffer[128];
     snprintf(debug_buffer, sizeof(debug_buffer), 
