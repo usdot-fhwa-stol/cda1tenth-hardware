@@ -157,8 +157,8 @@ void logDebug(const char* message) {
     static uint32_t last_debug_time = 0;
     uint32_t now = millis();
     
-    // Only publish debug messages every 1 second to see twist callbacks
-    if (now - last_debug_time > 1000) {
+    // Only publish debug messages every 5 seconds to avoid spam
+    if (now - last_debug_time > 5000) {
       // Ensure data array is allocated
       if (debug_msg.data.data == NULL) {
         debug_msg.data.data = (float*)malloc(3 * sizeof(float));
@@ -587,17 +587,17 @@ void loop() {
   // Debug logging - only in main loop, properly throttled
   static uint32_t last_debug_output = 0;
   uint32_t now = millis();
-  if (now - last_debug_output > 2000) { // Every 2 seconds for testing
+  if (now - last_debug_output > 10000) { // Every 10 seconds
     logDebug("status");
     last_debug_output = now;
   }
   
-  // Control loops disabled to test ROS responsiveness
-  // static uint32_t last_control_update = 0;
-  // if (car_initialized && (now - last_control_update > 200)) { // Every 200ms
-  //   car.updateControlLoops();
-  //   last_control_update = now;
-  // }
+  // Control loops with very conservative timing to prevent blocking ROS
+  static uint32_t last_control_update = 0;
+  if (car_initialized && (now - last_control_update > 2000)) { // Every 2 seconds instead of 200ms
+    car.updateControlLoops();
+    last_control_update = now;
+  }
   
   // No delay - maximum responsiveness for ROS
 }
