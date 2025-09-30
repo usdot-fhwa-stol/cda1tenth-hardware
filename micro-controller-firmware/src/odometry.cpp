@@ -44,6 +44,20 @@ namespace {
 
   void odom_timer_cb(rcl_timer_t *timer, int64_t) {
     if (!timer || !car_initialized) return;
+    
+    // Debug counter (extern from main.cpp)
+    extern uint32_t odom_publish_count;
+    odom_publish_count++;
+    
+    // Log odometry publishing (every 10th publish to avoid spam)
+    if (odom_publish_count % 10 == 0) {
+      extern void logDebug(const char* message);
+      char odom_buffer[64];
+      snprintf(odom_buffer, sizeof(odom_buffer), 
+               "odom: x=%.2f, y=%.2f, yaw=%.2f, count=%lu", 
+               carX, carY, carYaw, odom_publish_count);
+      logDebug(odom_buffer);
+    }
 
     uint32_t now_ms = millis();
     float dt = (s_last_ms == 0) ? 0.0f : (now_ms - s_last_ms) / 1000.0f;

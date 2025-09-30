@@ -48,6 +48,10 @@ rcl_subscription_t twist_subscriber;
 // Motor RPM publisher
 rcl_publisher_t motor_rpm_publisher;
 std_msgs__msg__Float32MultiArray motor_rpm_msg;
+
+// Debug publisher
+rcl_publisher_t debug_publisher;
+std_msgs__msg__String debug_msg;
  
 // Additional ROS2 objects
 rcl_subscription_t geom_subscriber;
@@ -104,6 +108,10 @@ static SemaphoreHandle_t stateMutex;
 // LED status variables
 static uint32_t last_led_update = 0;
 static uint32_t led_blink_count = 0;
+
+// Debug counters
+static uint32_t twist_callback_count = 0;
+static uint32_t odom_publish_count = 0;
  
 typedef struct {
   TickType_t last_wake_time;
@@ -138,6 +146,14 @@ void updateLEDStatus() {
       break;
   }
   led_blink_count++;
+}
+
+// Debug logging function
+void logDebug(const char* message) {
+  if (state == AGENT_CONNECTED) {
+    rosidl_runtime_c__String__assign(&debug_msg.data, message);
+    rcl_publish(&debug_publisher, &debug_msg, NULL);
+  }
 }
  
 // Motor RPM timer callback disabled for stability
@@ -179,13 +195,25 @@ float getSteeringAngle(float omega, float vel) {
 }
  
 void twist_callback(const void * msgin) {
-  if (!car_initialized) return; // Don't process if car not ready
+  twist_callback_count++; // Debug counter
+  
+  if (!car_initialized) {
+    logDebug("twist_callback: car not initialized");
+    return; // Don't process if car not ready
+  }
   
   const auto * twist = static_cast<const geometry_msgs__msg__Twist *>(msgin);
  
   // Use bicycle model for proper steering angle calculation
   float steering_angle_deg = getSteeringAngle(twist->angular.z, twist->linear.x);
   float speed_rpm = twist->linear.x * o_speed_scaling_factor * 60.0f / (M_PI * 0.06f);
+ 
+  // Log the received command
+  char cmd_buffer[64];
+  snprintf(cmd_buffer, sizeof(cmd_buffer), 
+           "cmd_vel: v=%.2f, w=%.2f, angle=%.1f, rpm=%.1f", 
+           twist->linear.x, twist->angular.z, steering_angle_deg, speed_rpm);
+  logDebug(cmd_buffer);
  
   // Update car control without mutex to avoid blocking
   // This is safe since we're not running control loops
@@ -310,6 +338,13 @@ bool create_entities()
   //   &node,
   //   ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
   //   "motor_rpms"));
+
+  // create debug publisher
+  RCCHECK(rclc_publisher_init_best_effort(
+    &debug_publisher,
+    &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
+    "debug_log"));
  
   // create subscriber for vehicle geometry
   RCCHECK(rclc_subscription_init_best_effort(
@@ -346,7 +381,7 @@ bool create_entities()
     &executor, &twist_subscriber, &twist_msg,
     &twist_callback, ON_NEW_DATA));
   // Ensure spin_some returns promptly to keep the loop responsive
-  rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(50)); // Much more generous for stability
+  rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(10)); // More responsive to messages
 
   // Parameter server on this node
   // rclc_parameter_server_init_default(&param_server, &node);
@@ -392,6 +427,7 @@ void destroy_entities()
   rcl_subscription_fini(&twist_subscriber, &node);
   // Motor RPM timer disabled
   // rcl_timer_fini(&motor_rpm_timer);
+  rcl_publisher_fini(&debug_publisher, &node);
   rclc_executor_fini(&executor);
   rcl_node_fini(&node);
   rclc_support_fini(&support);
@@ -499,7 +535,7 @@ void loop() {
     case AGENT_CONNECTED:
       EXECUTE_EVERY_N_MS(2000, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
       if (state == AGENT_CONNECTED) {
-        rclc_executor_spin_some(&executor, RCL_MS_TO_NS(50));
+        rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
       }
       break;
     case AGENT_DISCONNECTED:
@@ -513,11 +549,20 @@ void loop() {
   // Update LED status to show micro-ROS connection state
   updateLEDStatus();
   
-  // Disable control loops completely to prevent blocking ROS
-  // Control loops are too heavy and block the executor
+  // Debug output every 5 seconds via ROS topic
+  static uint32_t last_debug_output = 0;
+  if (now - last_debug_output > 5000) {
+    char debug_buffer[128];
+    snprintf(debug_buffer, sizeof(debug_buffer), 
+             "Debug: twist_calls=%lu, odom_pubs=%lu, state=%d", 
+             twist_callback_count, odom_publish_count, state);
+    logDebug(debug_buffer);
+    last_debug_output = now;
+  }
+  
+  // Run control loops with much longer intervals to prevent blocking ROS
   static uint32_t last_control_update = 0;
-  uint32_t now = millis();
-  if (car_initialized && (now - last_control_update > 50)) {
+  if (car_initialized && (now - last_control_update > 200)) { // Every 200ms instead of 50ms
     car.updateControlLoops();
     last_control_update = now;
   }
