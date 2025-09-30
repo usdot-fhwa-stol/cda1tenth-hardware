@@ -1,4 +1,5 @@
 #include "odometry.h"
+#include "debug.h"
 
 #include <math.h>
 #include <string.h>
@@ -46,11 +47,9 @@ namespace {
     if (!timer || !car_initialized) return;
     
     // Debug counter
-    extern uint32_t odom_publish_count;
     odom_publish_count++;
     
     // Log debug info (throttled by logDebug function)
-    extern void logDebug(const char* message);
     logDebug("odom");
 
     uint32_t now_ms = millis();
