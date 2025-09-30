@@ -1,4 +1,5 @@
 #include "odometry.h"
+#include "debug.h"
 
 #include <math.h>
 #include <string.h>
@@ -45,13 +46,11 @@ namespace {
   void odom_timer_cb(rcl_timer_t *timer, int64_t) {
     if (!timer || !car_initialized) return;
     
-    // Debug counter (extern from main.cpp)
-    extern uint32_t odom_publish_count;
+    // Debug counter
     odom_publish_count++;
     
     // Log odometry publishing (every 10th publish to avoid spam)
     if (odom_publish_count % 10 == 0) {
-      extern void logDebug(const char* message);
       logDebug("odom");
     }
 

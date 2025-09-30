@@ -27,6 +27,7 @@
  
 // Include car control logic
 #include "car.h"
+#include "debug.h"
  
 #define CS_IMU      14
 #define LED_PIN     37
@@ -110,8 +111,8 @@ static uint32_t last_led_update = 0;
 static uint32_t led_blink_count = 0;
 
 // Debug counters
-static uint32_t twist_callback_count = 0;
-static uint32_t odom_publish_count = 0;
+uint32_t twist_callback_count = 0;
+uint32_t odom_publish_count = 0;
  
 typedef struct {
   TickType_t last_wake_time;
