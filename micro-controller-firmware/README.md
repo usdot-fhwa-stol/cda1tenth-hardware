@@ -1,18 +1,22 @@
 ## Building and Running
 
+0. Install Platform IO using the following installation [guide](https://docs.platformio.org/en/latest/integration/ide/vscode.html#installation)
+
 1. Build the project:
    ```bash
    pio run
    ```
 
-2. Put the ESP32 into the manual bootloader mode ([docs by EXPRESSIF](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html#manual-bootloader)).
+2. Use a USB cable to connect your laptop to the micro-controller board's USB-C port
 
-3. Upload to your ESP32:
+3. Put the ESP32 into the manual bootloader mode ([docs by EXPRESSIF](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html#manual-bootloader)).
+
+4. Upload to your ESP32:
    ```bash
    pio run --target upload
    ```
 
-4. Monitor serial output:
+5. Monitor serial output:
    ```bash
    pio device monitor
    ```
