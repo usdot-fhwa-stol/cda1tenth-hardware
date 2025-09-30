@@ -515,12 +515,12 @@ void loop() {
   
   // Disable control loops completely to prevent blocking ROS
   // Control loops are too heavy and block the executor
-  // static uint32_t last_control_update = 0;
-  // uint32_t now = millis();
-  // if (car_initialized && (now - last_control_update > 50)) {
-  //   car.updateControlLoops();
-  //   last_control_update = now;
-  // }
+  static uint32_t last_control_update = 0;
+  uint32_t now = millis();
+  if (car_initialized && (now - last_control_update > 50)) {
+    car.updateControlLoops();
+    last_control_update = now;
+  }
   
   // No delay - maximum responsiveness for ROS
 }
