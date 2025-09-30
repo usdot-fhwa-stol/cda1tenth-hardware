@@ -157,8 +157,8 @@ void logDebug(const char* message) {
     static uint32_t last_debug_time = 0;
     uint32_t now = millis();
     
-    // Only publish debug messages every 5 seconds to avoid spam (increased from 2s)
-    if (now - last_debug_time > 5000) {
+    // Only publish debug messages every 1 second to see twist callbacks
+    if (now - last_debug_time > 1000) {
       // Ensure data array is allocated
       if (debug_msg.data.data == NULL) {
         debug_msg.data.data = (float*)malloc(3 * sizeof(float));
@@ -225,6 +225,9 @@ float getSteeringAngle(float omega, float vel) {
 void twist_callback(const void * msgin) {
   twist_callback_count++; // Increment counter
   
+  // Force debug log on every twist callback to see if it's being called
+  logDebug("twist_received");
+  
   if (!car_initialized) {
     return; // Don't process if car not ready
   }
@@ -234,8 +237,6 @@ void twist_callback(const void * msgin) {
   // Use bicycle model for proper steering angle calculation
   float steering_angle_deg = getSteeringAngle(twist->angular.z, twist->linear.x);
   float speed_rpm = twist->linear.x * o_speed_scaling_factor * 60.0f / (M_PI * 0.06f);
- 
-  // Debug logging removed from twist callback to prevent spam
  
   // Update car control without mutex to avoid blocking
   // This is safe since we're not running control loops
@@ -586,17 +587,17 @@ void loop() {
   // Debug logging - only in main loop, properly throttled
   static uint32_t last_debug_output = 0;
   uint32_t now = millis();
-  if (now - last_debug_output > 10000) { // Every 10 seconds
+  if (now - last_debug_output > 2000) { // Every 2 seconds for testing
     logDebug("status");
     last_debug_output = now;
   }
   
-  // Run control loops with much longer intervals to prevent blocking ROS
-  static uint32_t last_control_update = 0;
-  if (car_initialized && (now - last_control_update > 200)) { // Every 200ms
-    car.updateControlLoops();
-    last_control_update = now;
-  }
+  // Control loops disabled to test ROS responsiveness
+  // static uint32_t last_control_update = 0;
+  // if (car_initialized && (now - last_control_update > 200)) { // Every 200ms
+  //   car.updateControlLoops();
+  //   last_control_update = now;
+  // }
   
   // No delay - maximum responsiveness for ROS
 }
