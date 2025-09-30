@@ -5,12 +5,14 @@
    pio run
    ```
 
-2. Upload to your ESP32:
+2. Put the ESP32 into the manual bootloader mode ([docs by EXPRESSIF](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html#manual-bootloader)).
+
+3. Upload to your ESP32:
    ```bash
    pio run --target upload
    ```
 
-3. Monitor serial output:
+4. Monitor serial output:
    ```bash
    pio device monitor
    ```
