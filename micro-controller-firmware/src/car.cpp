@@ -269,14 +269,14 @@ void Car::updateControlLoops() {
     // Always update steering position to reach target
     steeringMotor.updatePosition();
     
-    // Simplified position hold logic - only disable when completely stopped
-    if (isMovingFastEnough()) {
-      steeringMotor.setPositionHoldEnabled(true);
-    } else {
-      // Disable position hold when moving slowly or stopped
-      // steeringMotor.setPositionHoldEnabled(false);
-      steeringMotor.setPositionHoldEnabled(true);
-    }
+    // // Simplified position hold logic - only disable when completely stopped
+    // if (isMovingFastEnough()) {
+    //   steeringMotor.setPositionHoldEnabled(true);
+    // } else {
+    //   // Disable position hold when moving slowly or stopped
+    //   // steeringMotor.setPositionHoldEnabled(false);
+    //   steeringMotor.setPositionHoldEnabled(true);
+    // }
     
     unlock();
   }
