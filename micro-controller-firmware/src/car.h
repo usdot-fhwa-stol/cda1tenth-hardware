@@ -8,6 +8,8 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include <limits.h>
+#include "sensor_cache.h"
+#include "spi_manager.h"
 
 // SPI pin definitions
 #define CS_STEER    41
@@ -61,14 +63,54 @@ public:
   float lastExternalAngle = 0.0f;
   int stallCounter = 0;
   
+  // Enhanced fault detection and recovery
+  enum FaultType {
+    NO_FAULT = 0,
+    UV_CP_FAULT = 1,
+    OVERTEMP_FAULT = 2,
+    SHORT_CIRCUIT_FAULT = 3,
+    OPEN_LOAD_FAULT = 4,
+    STALL_FAULT = 5,
+    COMMUNICATION_FAULT = 6,
+    POSITION_ERROR_FAULT = 7
+  };
+  
+  struct MotorHealth {
+    FaultType current_fault;
+    uint32_t fault_count;
+    uint32_t recovery_attempts;
+    uint32_t last_fault_time;
+    bool is_healthy;
+    float health_score; // 0.0 to 1.0
+    float position_error;
+  };
+  
+  MotorHealth health_status;
+  bool last_status_check_result = true;
+  uint32_t last_status_check_time = 0;
+  static const uint32_t STATUS_CHECK_INTERVAL_MS = 100;
+  static const uint32_t MAX_RECOVERY_ATTEMPTS = 3;
+  static const uint32_t RECOVERY_COOLDOWN_MS = 5000;
+  
   SteeringMotor(int cs);
   void begin();
   void setSpeed(int32_t speed);
   void setTargetAngle(float angle);
   float getSteeringAngle();
   void updatePosition();
+  void updatePosition(const SensorData& cached_data);
+  void updatePosition(const SensorData& cached_data, SPIManager* spi_mgr);
   void applySpeed();
   float normalizeAngle(float angle);
+  bool checkStatusNonBlocking();
+  bool checkStatusNonBlocking(SPIManager* spi_mgr);
+  FaultType detectFaults();
+  FaultType detectFaults(SPIManager* spi_mgr);
+  bool recoverFromFault(FaultType fault);
+  MotorHealth getHealthStatus() const;
+  void updateHealthScore();
+  void resetFaultCounters();
+  bool validatePosition();
 };
 
 class DriveMotor {
@@ -82,12 +124,49 @@ public:
   int stall_counter = 0;
   float current_rpm = 0.0f;
   float target_rpm = 0.0f;
+  
+  // Enhanced fault detection and recovery
+  enum FaultType {
+    NO_FAULT = 0,
+    UV_CP_FAULT = 1,
+    OVERTEMP_FAULT = 2,
+    SHORT_CIRCUIT_FAULT = 3,
+    OPEN_LOAD_FAULT = 4,
+    STALL_FAULT = 5,
+    COMMUNICATION_FAULT = 6
+  };
+  
+  struct MotorHealth {
+    FaultType current_fault;
+    uint32_t fault_count;
+    uint32_t recovery_attempts;
+    uint32_t last_fault_time;
+    bool is_healthy;
+    float health_score; // 0.0 to 1.0
+  };
+  
+  MotorHealth health_status;
+  bool last_status_check_result = true;
+  uint32_t last_status_check_time = 0;
+  static const uint32_t STATUS_CHECK_INTERVAL_MS = 100;
+  static const uint32_t MAX_RECOVERY_ATTEMPTS = 3;
+  static const uint32_t RECOVERY_COOLDOWN_MS = 5000;
 
   DriveMotor(int cs);
   void begin();
   void setSpeed(float rpm);
   void updateControlLoop();
+  void updateControlLoop(const SensorData& cached_data);
+  void updateControlLoop(const SensorData& cached_data, SPIManager* spi_mgr);
   float getCurrentRPM();
+  bool checkStatusNonBlocking();
+  bool checkStatusNonBlocking(SPIManager* spi_mgr);
+  FaultType detectFaults();
+  FaultType detectFaults(SPIManager* spi_mgr);
+  bool recoverFromFault(FaultType fault);
+  MotorHealth getHealthStatus() const;
+  void updateHealthScore();
+  void resetFaultCounters();
 };
 
 class Car {
@@ -97,14 +176,24 @@ public:
   DriveMotor rightMotor;
   DriveMotor leftMotor;
   SteeringMotor steeringMotor;
+  SPIManager spi_manager;
 
   Car(int rightCS, int leftCS, int steerCS);
   void updateControlLoops();
+  void updateControlLoops(const SensorData& cached_data);
   void begin();
   void setSteeringAngle(float angle);
   void setSpeed(float rpm, float wheelbase, float trackWidth);
   float getRightMotorRPM();
   float getLeftMotorRPM();
+  
+  // SPI optimization methods
+  void processSPIOperations();
+  SPIManager::SPIPerformanceMetrics getSPIMetrics() const;
+  bool isSPIHealthy() const;
+  void enableAdaptiveSPIBatching(bool enable = true);
+  uint32_t getSPIErrorCount() const;
+  void clearSPIErrors();
 
 private:
   SemaphoreHandle_t carMutex;

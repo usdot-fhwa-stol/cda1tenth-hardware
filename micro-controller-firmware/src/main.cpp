@@ -25,9 +25,13 @@
 #include <nav_msgs/msg/odometry.h>
 #include <rosidl_runtime_c/string_functions.h>
  
-// Include car control logic
+// Include car control logic and new components
 #include "car.h"
 #include "debug.h"
+#include "connection_manager.h"
+#include "system_state_manager.h"
+#include "recovery_manager.h"
+#include "sensor_cache.h"
  
 #define CS_IMU      14
 #define LED_PIN     37
@@ -84,11 +88,75 @@ const float MAX_STEERING_ANGLE = 45.0f; // degrees
  
 // Car control instance
 Car car(CS_RIGHT, CS_LEFT, CS_STEER);
+
+// Enhanced system components
+ConnectionManager connection_manager;
+RecoveryManager recovery_manager(&connection_manager, &car);
+SystemStateManager system_state_manager(&connection_manager, &recovery_manager, &car);
+SensorCache sensor_cache;
  
 // Car initialization flags
 bool car_initialized = false;
+bool system_components_initialized = false;
 TaskHandle_t updateTaskHandle = NULL;
+TaskHandle_t sensorTaskHandle = NULL;
+TaskHandle_t systemTaskHandle = NULL;
 TaskHandle_t microRosTaskHandle = NULL;
+
+// FreeRTOS task for control loops with sensor cache integration
+void controlLoopTask(void *parameter) {
+  while (true) {
+    if (car_initialized && system_components_initialized) {
+      // Use cached sensor data for optimized control loops
+      SensorData cached_data = sensor_cache.getCachedData();
+      
+      if (cached_data.valid && sensor_cache.isDataFresh()) {
+        // Use cached data for non-blocking control
+        car.updateControlLoops(cached_data);
+      } else {
+        // Fallback to direct sensor reading if cache is stale
+        car.updateControlLoops();
+      }
+      
+      // Process any pending SPI operations
+      car.processSPIOperations();
+    }
+    vTaskDelay(pdMS_TO_TICKS(50)); // Run every 50ms for better responsiveness
+  }
+}
+
+// FreeRTOS task for sensor cache updates
+void sensorCacheTask(void *parameter) {
+  while (true) {
+    if (system_components_initialized) {
+      sensor_cache.update();
+    }
+    vTaskDelay(pdMS_TO_TICKS(20)); // 50Hz sensor updates
+  }
+}
+
+// FreeRTOS task for system management
+void systemManagementTask(void *parameter) {
+  while (true) {
+    if (system_components_initialized) {
+      // Update system components
+      connection_manager.update();
+      recovery_manager.update();
+      system_state_manager.update();
+      
+      // Monitor SPI health and take action if needed
+      if (!car.isSPIHealthy()) {
+        uint32_t error_count = car.getSPIErrorCount();
+        if (error_count > 10) {
+          // Clear SPI errors and potentially trigger recovery
+          car.clearSPIErrors();
+          recovery_manager.handleCriticalError();
+        }
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(100)); // Run every 100ms
+  }
+}
  
 // IMU instance
 LSM6DSO IMU;
@@ -228,8 +296,8 @@ void twist_callback(const void * msgin) {
   // Force debug log on every twist callback to see if it's being called
   logDebug("twist_received");
   
-  if (!car_initialized) {
-    return; // Don't process if car not ready
+  if (!car_initialized || !system_components_initialized) {
+    return; // Don't process if system not ready
   }
   
   const auto * twist = static_cast<const geometry_msgs__msg__Twist *>(msgin);
@@ -238,10 +306,24 @@ void twist_callback(const void * msgin) {
   float steering_angle_deg = getSteeringAngle(twist->angular.z, twist->linear.x);
   float speed_rpm = twist->linear.x * o_speed_scaling_factor * 60.0f / (M_PI * 0.06f);
  
-  // Update car control without mutex to avoid blocking
-  // This is safe since we're not running control loops
-  car.setSteeringAngle(steering_angle_deg);
-  car.setSpeed(speed_rpm, g_wheelbase, g_track_width);
+  // Process commands through system state manager for proper degradation handling
+  if (system_state_manager.canAcceptCommands()) {
+    bool speed_accepted = system_state_manager.processSpeedCommand(speed_rpm);
+    bool steering_accepted = system_state_manager.processSteeringCommand(steering_angle_deg);
+    
+    if (speed_accepted && steering_accepted) {
+      // Commands were accepted and processed by system state manager
+      // The system state manager will handle applying them to the car
+      car.setSteeringAngle(steering_angle_deg);
+      car.setSpeed(speed_rpm, g_wheelbase, g_track_width);
+    } else {
+      // Commands rejected due to system state - log for debugging
+      logDebug("commands_rejected");
+    }
+  } else {
+    // System cannot accept commands - possibly in safe mode
+    logDebug("system_not_ready");
+  }
 }
  
 // Callback function for the vehicle geometry subscriber
@@ -312,14 +394,27 @@ void initializeCar() {
     IMU.beginSPI(CS_IMU);
     IMU.initialize(BASIC_SETTINGS);
  
-    // Initialize car control
+    // Initialize car control with SPI optimizations
     car.begin();
+    car.enableAdaptiveSPIBatching(true); // Enable SPI optimizations
     delay(100);
  
     car.setSpeed(0.0f, g_wheelbase, g_track_width); // Start with zero speed
     car.setSteeringAngle(0.0f); // Start with zero steering angle
    
     car_initialized = true;
+  }
+}
+
+void initializeSystemComponents() {
+  if (!system_components_initialized && car_initialized) {
+    // Initialize sensor cache with hardware references
+    sensor_cache.initialize(&car, &IMU);
+    
+    // System components are already constructed, just mark as initialized
+    system_components_initialized = true;
+    
+    USBSerial.println("System components initialized successfully");
   }
 }
 
@@ -464,6 +559,20 @@ void destroy_entities()
   // rclc_parameter_server_fini(&param_server, &node);
  
   odometry_fini(&node);
+  
+  // Clean up FreeRTOS tasks
+  if (updateTaskHandle != NULL) {
+    vTaskDelete(updateTaskHandle);
+    updateTaskHandle = NULL;
+  }
+  if (sensorTaskHandle != NULL) {
+    vTaskDelete(sensorTaskHandle);
+    sensorTaskHandle = NULL;
+  }
+  if (systemTaskHandle != NULL) {
+    vTaskDelete(systemTaskHandle);
+    systemTaskHandle = NULL;
+  }
  
   // Motor RPM message disabled - no memory to free
   // if (motor_rpm_msg.data.data != NULL) {
@@ -505,10 +614,18 @@ void setup() {
   state = WAITING_AGENT;  
   // motor_rpm_msg.data = 0;
   
-  // Initialize debug message
+  // Initialize debug message with larger capacity for enhanced logging
   debug_msg.data.size = 0;
-  debug_msg.data.capacity = 0;
-  debug_msg.data.data = NULL;
+  debug_msg.data.capacity = 10; // Increased capacity for comprehensive status
+  debug_msg.data.data = (float*)malloc(10 * sizeof(float));
+  
+  // Initialize system components
+  initializeSystemComponents();
+  
+  // Create FreeRTOS tasks for enhanced system operation
+  xTaskCreate(controlLoopTask, "ControlLoop", 4096, NULL, 2, &updateTaskHandle);
+  xTaskCreate(sensorCacheTask, "SensorCache", 2048, NULL, 3, &sensorTaskHandle); // Higher priority for sensors
+  xTaskCreate(systemManagementTask, "SystemMgmt", 3072, NULL, 1, &systemTaskHandle);
  
   // Motor RPM message disabled for stability
   // motor_rpm_msg.data.size = 3;
@@ -521,11 +638,15 @@ uint32_t lastApplyMicros = micros();
  
 void testMotorControl() {
   initializeCar();
+  initializeSystemComponents();
  
   float steering_angle = car.steeringMotor.getSteeringAngle();
  
-  // Set initial speed and angle
-  car.setSpeed(200.0f, g_wheelbase, g_track_width);
+  // Set initial speed and angle through system state manager
+  if (system_state_manager.canAcceptCommands()) {
+    system_state_manager.processSpeedCommand(200.0f);
+    car.setSpeed(200.0f, g_wheelbase, g_track_width);
+  }
  
   USBSerial.println("Time Elapsed");
   USBSerial.println(steering_angle);
@@ -538,9 +659,59 @@ void testMotorControl() {
     return;
   }
   lastApplyMicros = now;
-  car.setSteeringAngle(angle);
+  
+  if (system_state_manager.canAcceptCommands()) {
+    system_state_manager.processSteeringCommand(angle);
+    car.setSteeringAngle(angle);
+  }
   angle = -angle;
   USBSerial.println(angle);
+}
+
+// Test function for all new components
+void testSystemComponents() {
+  if (!system_components_initialized) {
+    USBSerial.println("System components not initialized");
+    return;
+  }
+  
+  USBSerial.println("=== System Component Test ===");
+  
+  // Test Connection Manager
+  ConnectionManager::State conn_state = connection_manager.getState();
+  USBSerial.printf("Connection State: %d\n", conn_state);
+  USBSerial.printf("Connection Healthy: %s\n", connection_manager.isHealthy() ? "YES" : "NO");
+  
+  // Test System State Manager
+  SystemStateManager::SystemState sys_state = system_state_manager.getSystemState();
+  USBSerial.printf("System Mode: %d\n", sys_state.mode);
+  USBSerial.printf("Available Capabilities: 0x%02X\n", sys_state.available_capabilities);
+  USBSerial.printf("Can Accept Commands: %s\n", system_state_manager.canAcceptCommands() ? "YES" : "NO");
+  
+  // Test Recovery Manager
+  RecoveryManager::RecoveryMetrics recovery_metrics = recovery_manager.getMetrics();
+  USBSerial.printf("Recovery Attempts: %lu\n", recovery_metrics.total_recovery_attempts);
+  USBSerial.printf("Recovery Success Rate: %.2f%%\n", recovery_metrics.recovery_success_rate * 100);
+  USBSerial.printf("Safe Mode Active: %s\n", recovery_manager.isSafeModeActive() ? "YES" : "NO");
+  
+  // Test Sensor Cache
+  SensorData cached_data = sensor_cache.getCachedData();
+  USBSerial.printf("Sensor Data Valid: %s\n", cached_data.valid ? "YES" : "NO");
+  USBSerial.printf("Data Fresh: %s\n", sensor_cache.isDataFresh() ? "YES" : "NO");
+  USBSerial.printf("Fallback Mode: %s\n", sensor_cache.isInFallbackMode() ? "YES" : "NO");
+  if (cached_data.valid) {
+    USBSerial.printf("Right RPM: %.2f, Left RPM: %.2f, Steering: %.2f\n", 
+                    cached_data.right_rpm, cached_data.left_rpm, cached_data.steering_angle);
+  }
+  
+  // Test SPI Manager
+  SPIManager::SPIPerformanceMetrics spi_metrics = car.getSPIMetrics();
+  USBSerial.printf("SPI Success Rate: %.2f%%\n", spi_metrics.success_rate * 100);
+  USBSerial.printf("SPI Bus Efficiency: %.2f%%\n", spi_metrics.bus_efficiency * 100);
+  USBSerial.printf("SPI Operations: %lu\n", spi_metrics.total_operations);
+  USBSerial.printf("SPI Healthy: %s\n", car.isSPIHealthy() ? "YES" : "NO");
+  
+  USBSerial.println("=== End Component Test ===");
 }
  
  
@@ -557,6 +728,31 @@ void loop() {
   }
   last_loop_time = current_time;
   
+  // Update connection manager state based on micro-ROS state
+  if (system_components_initialized) {
+    // Sync connection manager state with micro-ROS state
+    switch (state) {
+      case WAITING_AGENT:
+        if (connection_manager.getState() != ConnectionManager::WAITING) {
+          // Connection manager will handle the transition
+        }
+        break;
+      case AGENT_AVAILABLE:
+        // Connection manager handles availability detection
+        break;
+      case AGENT_CONNECTED:
+        if (connection_manager.getState() != ConnectionManager::CONNECTED) {
+          // Notify connection manager of successful connection
+        }
+        break;
+      case AGENT_DISCONNECTED:
+        if (connection_manager.getState() == ConnectionManager::CONNECTED) {
+          recovery_manager.handleConnectionDrop();
+        }
+        break;
+    }
+  }
+
   switch (state) {
     case WAITING_AGENT:
       EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;);
@@ -584,19 +780,50 @@ void loop() {
   // Update LED status to show micro-ROS connection state
   updateLEDStatus();
   
-  // Debug logging - only in main loop, properly throttled
+  // Enhanced debug logging with system status
   static uint32_t last_debug_output = 0;
   uint32_t now = millis();
-  if (now - last_debug_output > 10000) { // Every 10 seconds
-    logDebug("status");
+  if (now - last_debug_output > 5000) { // Every 5 seconds
+    if (system_components_initialized) {
+      // Log comprehensive system status
+      SystemStateManager::SystemState sys_state = system_state_manager.getSystemState();
+      ConnectionManager::State conn_state = connection_manager.getState();
+      RecoveryManager::RecoveryMetrics recovery_metrics = recovery_manager.getMetrics();
+      SPIManager::SPIPerformanceMetrics spi_metrics = car.getSPIMetrics();
+      
+      // Create comprehensive debug message
+      if (debug_msg.data.data != NULL && debug_msg.data.capacity >= 10) {
+        debug_msg.data.size = 10;
+        debug_msg.data.data[0] = (float)sys_state.mode;
+        debug_msg.data.data[1] = (float)conn_state;
+        debug_msg.data.data[2] = spi_metrics.success_rate;
+        debug_msg.data.data[3] = spi_metrics.bus_efficiency;
+        debug_msg.data.data[4] = (float)recovery_metrics.total_recovery_attempts;
+        debug_msg.data.data[5] = recovery_metrics.recovery_success_rate;
+        debug_msg.data.data[6] = sensor_cache.isDataValid() ? 1.0f : 0.0f;
+        debug_msg.data.data[7] = sensor_cache.isInFallbackMode() ? 1.0f : 0.0f;
+        debug_msg.data.data[8] = (float)twist_callback_count;
+        debug_msg.data.data[9] = (float)state;
+        
+        rcl_publish(&debug_publisher, &debug_msg, NULL);
+      }
+      
+      // Also log to USB Serial for local debugging
+      USBSerial.printf("SYS: Mode=%d, Conn=%d, SPI=%.2f%%, Sensor=%s, Recovery=%d\n",
+                      sys_state.mode, conn_state, spi_metrics.success_rate * 100,
+                      sensor_cache.isDataValid() ? "OK" : "FAIL",
+                      recovery_metrics.total_recovery_attempts);
+    } else {
+      logDebug("status");
+    }
     last_debug_output = now;
   }
   
-  // Control loops with very conservative timing to prevent blocking ROS
-  static uint32_t last_control_update = 0;
-  if (car_initialized && (now - last_control_update > 2000)) { // Every 2 seconds instead of 200ms
-    car.updateControlLoops();
-    last_control_update = now;
+  // Periodic system component testing (every 30 seconds)
+  static uint32_t last_component_test = 0;
+  if (system_components_initialized && (now - last_component_test > 30000)) {
+    testSystemComponents();
+    last_component_test = now;
   }
   
   // No delay - maximum responsiveness for ROS
