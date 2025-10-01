@@ -1,7 +1,6 @@
 #include "system_health_dashboard.h"
 #include "system_performance_monitor.h"
 #include "error_logger.h"
-#include "debug_manager.h"
 #include <rclc/rclc.h>
 #include <string.h>
 #include <Arduino.h>

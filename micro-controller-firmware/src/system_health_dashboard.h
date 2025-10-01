@@ -6,22 +6,11 @@
 #include "freertos/semphr.h"
 #include <rcl/rcl.h>
 #include <std_msgs/msg/float32_multi_array.h>
-#include <diagnostic_msgs/msg/diagnostic_array.h>
-#include <diagnostic_msgs/msg/diagnostic_status.h>
-#include <diagnostic_msgs/msg/key_value.h>
+#include "debug_manager.h"  // Include for DebugLevel enum
 
 // Forward declarations
 class SystemPerformanceMonitor;
 class ErrorLogger;
-class DebugManager;
-
-enum class DebugLevel : uint8_t {
-    MINIMAL = 0,    // Only critical system status
-    BASIC = 1,      // Basic performance metrics
-    DETAILED = 2,   // Detailed diagnostics
-    VERBOSE = 3,    // All available data
-    DEVELOPER = 4   // Development-specific debugging
-};
 
 struct DiagnosticConfig {
     DebugLevel level;
@@ -92,7 +81,7 @@ private:
     
     // ROS messages
     std_msgs__msg__Float32MultiArray health_msg_;
-    diagnostic_msgs__msg__DiagnosticArray diagnostic_msg_;
+    std_msgs__msg__Float32MultiArray diagnostic_msg_;  // Simplified for ESP32
     std_msgs__msg__Float32MultiArray performance_msg_;
     
     // Configuration
