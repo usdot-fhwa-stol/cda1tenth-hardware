@@ -89,4 +89,7 @@ public:
     void forceUpdate();
 };
 
+// Global sensor cache instance
+extern SensorCache g_sensor_cache;
+
 #endif // SENSOR_CACHE_H

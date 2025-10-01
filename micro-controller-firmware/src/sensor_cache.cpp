@@ -3,6 +3,9 @@
 #include "SparkFunLSM6DSO.h"
 #include <math.h>
 
+// Global sensor cache instance
+SensorCache g_sensor_cache;
+
 SensorCache::SensorCache() : car_instance(nullptr), imu_instance(nullptr), 
                              use_fallback_mode(false), last_successful_read(0) {
     cache_mutex = xSemaphoreCreateMutex();
