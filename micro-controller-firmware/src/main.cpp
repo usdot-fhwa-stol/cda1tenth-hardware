@@ -593,11 +593,8 @@ void loop() {
     last_debug_output = now;
   }
   
-  // Control loops with improved timing for better responsiveness
-  static uint32_t last_control_update = 0;
-  if (car_initialized && (now - last_control_update > 100)) { // Every 100ms for better control
+  if (car_initialized) {
     car.updateControlLoops();
-    last_control_update = now;
   }
   
   // No delay - maximum responsiveness for ROS

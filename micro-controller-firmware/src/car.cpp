@@ -75,7 +75,7 @@ void SteeringMotor::updatePosition() {
   
   // Additional throttling for SPI operations
   static uint32_t last_spi_operation = 0;
-  if (now - last_spi_operation < 20000) {  // Only do SPI operations every 20ms
+  if (now - last_spi_operation < 10000) {  // Only do SPI operations every 10ms for better responsiveness
     return;
   }
   last_spi_operation = now;
@@ -208,12 +208,13 @@ void DriveMotor::setSpeed(float rpm) {
   target_rpm = rpm;
 }
 
+
 void DriveMotor::updateControlLoop() {
   uint32_t now = micros();
   
   // Throttle SPI operations to prevent blocking
   static uint32_t last_spi_read = 0;
-  if (now - last_spi_read < 10000) {  // Only read SPI every 10ms
+  if (now - last_spi_read < 5000) {  // Only read SPI every 5ms for better responsiveness
     return;
   }
   last_spi_read = now;
@@ -253,7 +254,7 @@ void DriveMotor::updateControlLoop() {
       if ((int32_t)step_rate_cmd < 0) step_rate_cmd = 0;
     }
 
-    // Limit rate of change
+    // Limit rate of change - more aggressive for better responsiveness
     float max_step_change = MAX_STEP_ACCEL * (dt / 1e6f);  // steps/sec
 
     if (target_steps_per_sec > step_rate_cmd + max_step_change) {
@@ -262,6 +263,11 @@ void DriveMotor::updateControlLoop() {
       step_rate_cmd -= max_step_change;
     } else {
       step_rate_cmd = target_steps_per_sec;
+    }
+    
+    // Additional responsiveness boost for small errors
+    if (fabsf(error) < 100.0f && target_steps_per_sec > 0) {
+      step_rate_cmd = target_steps_per_sec;  // Direct assignment for small errors
     }
 
     // Clamp to non-negative
