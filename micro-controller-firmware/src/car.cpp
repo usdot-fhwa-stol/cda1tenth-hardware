@@ -61,39 +61,20 @@ void SteeringMotor::setTargetAngle(float angle) {
   // Compute new target steps for desired angle
   float targetSteps = (targetAngle / DEGREES_PER_REVOLUTION) * stepsPerRev * STEERING_GEAR_RATIO;
 
-  // Always set target for movement, regardless of hold state
+  // Set target for internal motion control
   driver.XTARGET((int32_t)targetSteps);
-  
-  // Ensure we're in positioning mode for the movement
-  driver.RAMPMODE(0); // Positioning mode
-  
-  // Debug output to help diagnose steering issues
-  static uint32_t last_debug_time = 0;
-  uint32_t now = millis();
-  if (now - last_debug_time > 1000) {  // Debug every second
-    // USBSerial.printf("Steering: Current=%.1f, Target=%.1f, Error=%.1f\n", 
-    //                  currentAngle, targetAngle, normalizeAngle(targetAngle - currentAngle));
-    last_debug_time = now;
-  }
 }
 
 void SteeringMotor::updatePosition() {
   uint32_t now = micros();
   if (now - lastCorrectionMicros < STEERING_CORRECTION_INTERVAL) return;
   lastCorrectionMicros = now;
-  
-  // Additional throttling for SPI operations
-  static uint32_t last_spi_operation = 0;
-  if (now - last_spi_operation < 5000) {  // Only do SPI operations every 5ms for better steering responsiveness
-    return;
-  }
-  last_spi_operation = now;
 
   // Read actual steering angle from sensor
   float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
   float error = normalizeAngle(targetAngle - currentAngle);
 
-  // Stall detection: if angle hasn't changed much, increment counter
+  // // Stall detection: if angle hasn't changed much, increment counter
   if (fabsf(currentAngle - lastExternalAngle) < SMALL_MOVEMENT_THRESHOLD) {
     stallCounter++;
   } else {
@@ -104,45 +85,22 @@ void SteeringMotor::updatePosition() {
   float stepsPerRev = MOTOR_STEPS * MICROSTEPS;
   int32_t actualSteps = (int32_t)((currentAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
 
-  // Check if position hold is enabled (controlled by speed)
-  bool positionHoldEnabled = (driver.RAMPMODE() == 0); // Positioning mode means hold is enabled
-
   if (stallCounter > STALL_DETECTION_COUNT) {
     // Full resync: align both actual and target to avoid fighting
     driver.XACTUAL(actualSteps);
-    if (positionHoldEnabled) {
-      driver.XTARGET(actualSteps);
-    }
+    driver.XTARGET(actualSteps);
     stallCounter = 0;
     return;
   }
 
-  // Always allow large movements to reach target, regardless of hold state
+  // Normal drift correction if error exceeds threshold
   if (fabsf(error) > STEERING_MAX_ALLOWED_ERROR) {
     driver.XACTUAL(actualSteps);
-    
-    // Always update target to reach desired position
-    int32_t targetSteps = (int32_t)((targetAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
-    driver.XTARGET(targetSteps);
-    
-    // Ensure we're in positioning mode for movement
-    driver.RAMPMODE(0); // Positioning mode
   }
 }
 
 void SteeringMotor::applySpeed() {
   // Empty: internal logic controls speed automatically
-}
-
-void SteeringMotor::setPositionHoldEnabled(bool enabled) {
-  if (enabled) {
-    // Enable position hold - set to positioning mode
-    driver.RAMPMODE(0); // Positioning mode
-  } else {
-    // Disable position hold - set to velocity mode with zero velocity
-    driver.RAMPMODE(2); // Velocity mode
-    driver.VMAX(0);      // Zero velocity
-  }
 }
 
 
@@ -216,38 +174,20 @@ bool tmc5160_recover(TMC5160Stepper& drv, int ENN_PIN) {
 void DriveMotor::setSpeed(float rpm) {
   target_steps_per_sec = (abs(rpm) / 60.0f) * MOTOR_STEPS * MICROSTEPS;
   target_rpm = rpm;
-  
-  // Set direction immediately
-  driver.shaft(rpm < 0);
-  
-  // If target is below minimum threshold, stop immediately
-  if (abs(rpm) < MIN_SPEED_THRESHOLD) {
-    driver.VMAX(0);
-    step_rate_cmd = 0;
-  }
 }
 
-
 void DriveMotor::updateControlLoop() {
-  uint32_t now = micros();
-  
-  // Throttle SPI operations to prevent blocking
-  static uint32_t last_spi_read = 0;
-  if (now - last_spi_read < 5000) {  // Only read SPI every 5ms for better responsiveness
-    return;
-  }
-  last_spi_read = now;
-  
   if (driver.GSTAT() & (1 << 2)) { // Check for UV_CP fault
     if (!tmc5160_recover(driver, EN_PIN)) {
       return; // Recovery failed, do not proceed
     }
   }
   int32_t current_enc = driver.X_ENC();
+  uint32_t now = micros();
   uint32_t dt = now - last_time;
   int32_t delta_enc = current_enc - last_enc;
   
-  // Avoid division by zero and handle timing
+  // Avoid division by zero
   if (dt > 0) {
     float measured_ticks_per_sec = (float)delta_enc * 1e6f / dt;
     float measured_steps_per_sec = measured_ticks_per_sec * (MOTOR_STEPS * MICROSTEPS / ENCODER_TICKS_PER_REVOLUTION);
@@ -256,27 +196,26 @@ void DriveMotor::updateControlLoop() {
     // Calculate current RPM
     current_rpm = (measured_steps_per_sec / (MOTOR_STEPS * MICROSTEPS)) * 60.0f;
 
-    // Calculate error and apply control logic
     float error = target_steps_per_sec - measured_steps_per_sec;
-    
-    // Stall detection and recovery
+    int32_t adjustment = (int32_t)(error * DRIVE_ERROR_GAIN);
+
     if (measured_steps_per_sec < (DRIVE_STALL_THRESHOLD * step_rate_cmd)) {
       stall_counter++;
     } else {
       stall_counter = 0;
     }
 
-    // Apply stall recovery or normal control
     if (stall_counter > DRIVE_MAX_STALL_COUNT) {
       step_rate_cmd -= DRIVE_STALL_REDUCTION * stall_counter;
+      if ((int32_t)step_rate_cmd < 0) step_rate_cmd = 0;
     } else {
-      int32_t adjustment = (int32_t)(error * DRIVE_ERROR_GAIN);
       step_rate_cmd += adjustment;
+      if ((int32_t)step_rate_cmd < 0) step_rate_cmd = 0;
     }
 
-    // Limit rate of change for smooth acceleration/deceleration
-    float max_step_change = MAX_STEP_ACCEL * (dt / 1e6f);
-    
+    // Limit rate of change
+    float max_step_change = MAX_STEP_ACCEL * (dt / 1e6f);  // steps/sec
+
     if (target_steps_per_sec > step_rate_cmd + max_step_change) {
       step_rate_cmd += max_step_change;
     } else if (target_steps_per_sec < step_rate_cmd - max_step_change) {
@@ -284,16 +223,10 @@ void DriveMotor::updateControlLoop() {
     } else {
       step_rate_cmd = target_steps_per_sec;
     }
-    
-    // Responsiveness boost for small errors
-    if (fabsf(error) < 100.0f && target_steps_per_sec > 0) {
-      step_rate_cmd = target_steps_per_sec;
-    }
 
-    // Clamp to non-negative values
+    // Clamp to non-negative
     if (step_rate_cmd < 0.0f) step_rate_cmd = 0.0f;
 
-    // Apply motor commands
     driver.VMAX(step_rate_cmd);
     driver.shaft(target_rpm < 0);
   }
@@ -309,7 +242,6 @@ float DriveMotor::getCurrentRPM() {
 float DriveMotor::getCurrentRPMAtomic() {
   return current_rpm;  // Direct access to volatile variable
 }
-
 
 Car::Car(int rightCS, int leftCS, int steerCS)
   : rightMotor(rightCS), leftMotor(leftCS), steeringMotor(steerCS) {
