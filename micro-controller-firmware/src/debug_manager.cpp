@@ -243,6 +243,36 @@ void DebugManager::recordSensorReadFailure() {
     metrics.sensor_read_failures.fetch_add(1);
 }
 
+void DebugManager::recordOdometryCalculationTime(float time_ms) {
+    if (!metrics_collection_enabled) return;
+    
+    // Update average calculation time using exponential moving average
+    float current_avg = metrics.odometry_avg_calc_time_ms.load();
+    float new_avg = (current_avg * 0.9f) + (time_ms * 0.1f);
+    metrics.odometry_avg_calc_time_ms.store(new_avg);
+    
+    // Update max calculation time
+    float current_max = metrics.odometry_max_calc_time_ms.load();
+    if (time_ms > current_max) {
+        metrics.odometry_max_calc_time_ms.store(time_ms);
+    }
+}
+
+void DebugManager::recordOdometryStaleData() {
+    if (!metrics_collection_enabled) return;
+    metrics.odometry_stale_data_events.fetch_add(1);
+}
+
+void DebugManager::recordOdometryInvalidData() {
+    if (!metrics_collection_enabled) return;
+    metrics.odometry_invalid_data_events.fetch_add(1);
+}
+
+void DebugManager::recordOdometryError() {
+    if (!metrics_collection_enabled) return;
+    metrics.odometry_calculation_errors.fetch_add(1);
+}
+
 void DebugManager::calculateRates() {
     uint32_t now = millis();
     uint32_t dt = now - rate_counters.last_rate_calc_time;
@@ -321,7 +351,7 @@ void DebugManager::publishMetrics() {
     if (debug_mutex == NULL || xSemaphoreTake(debug_mutex, pdMS_TO_TICKS(5)) != pdTRUE) return;
     
     if (metrics_msg.data.data != NULL) {
-        metrics_msg.data.size = 15;  // Number of metrics we're publishing
+        metrics_msg.data.size = 20;  // Number of metrics we're publishing (increased for odometry)
         
         // Performance metrics
         metrics_msg.data.data[0] = (float)metrics.twist_callbacks_per_sec.load();
@@ -343,6 +373,13 @@ void DebugManager::publishMetrics() {
         metrics_msg.data.data[12] = (float)metrics.uptime_seconds.load();
         metrics_msg.data.data[13] = health.overall_health_score;
         metrics_msg.data.data[14] = (float)(health.ros_connection_healthy ? 1 : 0);
+        
+        // Odometry-specific metrics
+        metrics_msg.data.data[15] = (float)metrics.odometry_stale_data_events.load();
+        metrics_msg.data.data[16] = (float)metrics.odometry_invalid_data_events.load();
+        metrics_msg.data.data[17] = (float)metrics.odometry_calculation_errors.load();
+        metrics_msg.data.data[18] = metrics.odometry_avg_calc_time_ms.load();
+        metrics_msg.data.data[19] = metrics.odometry_max_calc_time_ms.load();
         
         rcl_publish(metrics_publisher, &metrics_msg, NULL);
     }
@@ -367,8 +404,9 @@ void DebugManager::update() {
         publishMetrics();
         last_metrics_publish = now;
         
-        // Reset max loop time after publishing
+        // Reset max times after publishing
         metrics.max_loop_time_ms.store(0.0f);
+        metrics.odometry_max_calc_time_ms.store(0.0f);
     }
 }
 

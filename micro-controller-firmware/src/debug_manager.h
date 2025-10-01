@@ -37,6 +37,13 @@ struct PerformanceMetrics {
     std::atomic<size_t> free_memory_bytes{0};
     std::atomic<uint32_t> uptime_seconds{0};
     
+    // Odometry-specific metrics
+    std::atomic<uint32_t> odometry_stale_data_events{0};
+    std::atomic<uint32_t> odometry_invalid_data_events{0};
+    std::atomic<uint32_t> odometry_calculation_errors{0};
+    std::atomic<float> odometry_avg_calc_time_ms{0.0f};
+    std::atomic<float> odometry_max_calc_time_ms{0.0f};
+    
     void reset() {
         twist_callbacks_per_sec.store(0);
         odom_publishes_per_sec.store(0);
@@ -51,6 +58,11 @@ struct PerformanceMetrics {
         cpu_usage_percent.store(0.0f);
         free_memory_bytes.store(0);
         uptime_seconds.store(0);
+        odometry_stale_data_events.store(0);
+        odometry_invalid_data_events.store(0);
+        odometry_calculation_errors.store(0);
+        odometry_avg_calc_time_ms.store(0.0f);
+        odometry_max_calc_time_ms.store(0.0f);
     }
 };
 
@@ -143,6 +155,12 @@ public:
     void recordCommandQueueOverflow();
     void recordSensorReadFailure();
     
+    // Odometry-specific monitoring
+    void recordOdometryCalculationTime(float time_ms);
+    void recordOdometryStaleData();
+    void recordOdometryInvalidData();
+    void recordOdometryError();
+    
     // Performance metrics
     const PerformanceMetrics& getMetrics() const;
     const SystemHealthIndicators& getHealthIndicators() const;
@@ -178,5 +196,11 @@ extern DebugManager g_debug_manager;
 #define RECORD_CONTROL_LOOP(time_ms) g_debug_manager.recordControlLoop(time_ms)
 #define RECORD_SPI_ERROR() g_debug_manager.recordSPIError()
 #define RECORD_CONNECTION_DROP() g_debug_manager.recordConnectionDrop()
+
+// Odometry monitoring macros
+#define RECORD_ODOM_CALC_TIME(time_ms) g_debug_manager.recordOdometryCalculationTime(time_ms)
+#define RECORD_ODOM_STALE_DATA() g_debug_manager.recordOdometryStaleData()
+#define RECORD_ODOM_INVALID_DATA() g_debug_manager.recordOdometryInvalidData()
+#define RECORD_ODOM_ERROR() g_debug_manager.recordOdometryError()
 
 #endif // DEBUG_MANAGER_H
