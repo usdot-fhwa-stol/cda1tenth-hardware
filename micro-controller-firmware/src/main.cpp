@@ -64,13 +64,111 @@ geometry_msgs__msg__Twist twist_msg;
 unsigned int g_odom_period_ms = 100; // 10Hz odometry for maximum stability
 float g_wheel_radius = 0.03;
 
-extern bool odometry_init(rcl_node_t* node, rclc_support_t* support, rclc_executor_t* executor);
-extern void odometry_fini(rcl_node_t* node);
-extern void odometry_reset(float x, float y, float yaw_rad);
-extern void odometry_set_period_ms(unsigned int period_ms);
-extern void odometry_set_wheel_radius(float r);
+// Odometry helper functions
+geometry_msgs__msg__Quaternion yaw_to_quaternion(float yaw_rad) {
+  geometry_msgs__msg__Quaternion q;
+  q.x = 0.0;
+  q.y = 0.0;
+  q.z = sinf(yaw_rad / 2.0f);
+  q.w = cosf(yaw_rad / 2.0f);
+  return q;
+}
+
+void odom_timer_callback(rcl_timer_t *timer, int64_t) {
+  if (!timer || !car_initialized) return;
+  
+  // Debug counter
+  odom_publish_count++;
+  
+  uint32_t now_ms = millis();
+  float dt = (odom_last_ms == 0) ? 0.0f : (now_ms - odom_last_ms) / 1000.0f;
+  odom_last_ms = now_ms;
+
+  // Use static cached values to avoid ANY blocking operations
+  static float cached_gyro_z = 0.0f;
+  static float cached_right_rpm = 0.0f;
+  static float cached_left_rpm = 0.0f;
+  static uint32_t last_sensor_read = 0;
+  
+  // Only read sensors every 100ms to minimize blocking
+  if (now_ms - last_sensor_read > 100) {
+    // These operations are still blocking but much less frequent
+    cached_gyro_z = IMU.readFloatGyroZ() * (M_PI / 180.0f);
+    // Use atomic reads to avoid mutex contention
+    cached_right_rpm = car.getRightMotorRPMAtomic();
+    cached_left_rpm = car.getLeftMotorRPMAtomic();
+    last_sensor_read = now_ms;
+  }
+  
+  odom_yaw += cached_gyro_z * dt;
+  
+  float avg_rpm = 0.5f * (cached_right_rpm + cached_left_rpm);
+  float v = (avg_rpm / 60.0f) * 2.0f * M_PI * odom_wheel_radius;
+
+  odom_x += v * cosf(odom_yaw) * dt;
+  odom_y += v * sinf(odom_yaw) * dt;
+
+  // Use static message to avoid repeated allocation/deallocation
+  static nav_msgs__msg__Odometry odom;
+  static bool odom_initialized = false;
+  
+  if (!odom_initialized) {
+    nav_msgs__msg__Odometry__init(&odom);
+    rosidl_runtime_c__String__assign(&odom.header.frame_id, "odom");
+    rosidl_runtime_c__String__assign(&odom.child_frame_id, "base_link");
+    odom_initialized = true;
+  }
+
+  odom.pose.pose.position.x = odom_x;
+  odom.pose.pose.position.y = odom_y;
+  odom.pose.pose.orientation = yaw_to_quaternion(odom_yaw);
+
+  odom.pose.covariance[0]  = 0.2;
+  odom.pose.covariance[7]  = 0.2;
+  odom.pose.covariance[35] = 0.4;
+
+  odom.twist.twist.linear.x  = v;
+  odom.twist.twist.angular.z = cached_gyro_z;
+
+  (void) rcl_publish(&odom_publisher, &odom, nullptr);
+}
+
+bool odometry_init(rcl_node_t* node, rclc_support_t* support, rclc_executor_t* executor) {
+  if (rclc_publisher_init_default(
+        &odom_publisher, node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
+        "odom") != RCL_RET_OK) return false;
+
+  if (rclc_timer_init_default(
+        &odom_timer, support, RCL_MS_TO_NS(odom_period_ms), odom_timer_callback) != RCL_RET_OK) return false;
+
+  if (rclc_executor_add_timer(executor, &odom_timer) != RCL_RET_OK) return false;
+
+  odom_last_ms = 0;
+  return true;
+}
+
+void odometry_fini(rcl_node_t* node) {
+  (void) rcl_timer_fini(&odom_timer);
+  (void) rcl_publisher_fini(&odom_publisher, node);
+}
+
+void odometry_reset(float x, float y, float yaw_rad) {
+  odom_x = x;
+  odom_y = y;
+  odom_yaw = yaw_rad;
+  odom_last_ms = 0;
+}
+
+void odometry_set_period_ms(unsigned int period_ms) {
+  odom_period_ms = period_ms;
+  // Note: Timer recreation would need to be handled in the main loop
+}
+
+void odometry_set_wheel_radius(float r) {
+  odom_wheel_radius = r;
+}
  
-static float g_odom_x = 0.f, g_odom_y = 0.f, g_odom_yaw = 0.f;
  
 float g_wheelbase = 0.185f;
 float g_track_width = 0.15f;
@@ -84,11 +182,21 @@ const float MAX_STEERING_ANGLE = 45.0f; // degrees
  
 // Car control instance
 Car car(CS_RIGHT, CS_LEFT, CS_STEER);
- 
+
 // Car initialization flags
 bool car_initialized = false;
 TaskHandle_t updateTaskHandle = NULL;
 TaskHandle_t microRosTaskHandle = NULL;
+
+// Odometry variables
+rcl_publisher_t odom_publisher;
+rcl_timer_t odom_timer;
+float odom_x = 0.0f;
+float odom_y = 0.0f;
+float odom_yaw = 0.0f;
+float odom_wheel_radius = 0.03f;
+unsigned int odom_period_ms = 20;
+uint32_t odom_last_ms = 0;
  
 // IMU instance
 LSM6DSO IMU;
