@@ -30,7 +30,7 @@ namespace {
   float carYaw = 0.0f;
 
   float s_wheel_radius = 0.03f;
-  unsigned int s_period_ms = 20;
+  unsigned int s_period_ms = 20; 
 
   uint32_t s_last_ms = 0;
 
@@ -61,8 +61,8 @@ namespace {
     static float cached_left_rpm = 0.0f;
     static uint32_t last_sensor_read = 0;
     
-    // Only read sensors every 200ms to minimize blocking
-    if (now_ms - last_sensor_read > 200) {
+    // Only read sensors every 500ms to minimize blocking
+    if (now_ms - last_sensor_read > 100) {
       // These operations are still blocking but much less frequent
       cached_gyro_z = IMU.readFloatGyroZ() * (M_PI / 180.0f);
       // Use atomic reads to avoid mutex contention
