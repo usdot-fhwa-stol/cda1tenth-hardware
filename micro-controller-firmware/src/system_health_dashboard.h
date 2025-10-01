@@ -23,7 +23,7 @@ struct DiagnosticConfig {
     uint32_t publish_interval_ms;
     
     DiagnosticConfig() {
-        level = DebugLevel::BASIC;
+        level = DebugLevel::INFO;  // Use existing DebugLevel values
         enable_performance_metrics = true;
         enable_error_reporting = true;
         enable_health_monitoring = true;

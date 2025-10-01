@@ -204,42 +204,42 @@ void SystemHealthDashboard::setDebugLevel(DebugLevel level) {
     config_.level = level;
     
     // Adjust configuration based on debug level
+    // Map existing DebugLevel values to dashboard configurations
     switch (level) {
-        case DebugLevel::MINIMAL:
+        case DebugLevel::ERROR:
+            // Minimal configuration - only critical errors
             config_.enable_performance_metrics = false;
             config_.enable_timing_diagnostics = false;
             config_.enable_memory_diagnostics = false;
+            config_.enable_communication_diagnostics = false;
             config_.publish_interval_ms = 5000;  // 0.2Hz
             break;
             
-        case DebugLevel::BASIC:
+        case DebugLevel::WARN:
+            // Basic configuration - warnings and errors
             config_.enable_performance_metrics = true;
             config_.enable_timing_diagnostics = false;
             config_.enable_memory_diagnostics = false;
+            config_.enable_communication_diagnostics = false;
             config_.publish_interval_ms = 2000;  // 0.5Hz
             break;
             
-        case DebugLevel::DETAILED:
+        case DebugLevel::INFO:
+            // Standard configuration - most diagnostics enabled
             config_.enable_performance_metrics = true;
             config_.enable_timing_diagnostics = true;
             config_.enable_memory_diagnostics = true;
+            config_.enable_communication_diagnostics = false;
             config_.publish_interval_ms = 1000;  // 1Hz
             break;
             
-        case DebugLevel::VERBOSE:
+        case DebugLevel::DEBUG:
+            // Full configuration - all diagnostics enabled
             config_.enable_performance_metrics = true;
             config_.enable_timing_diagnostics = true;
             config_.enable_memory_diagnostics = true;
             config_.enable_communication_diagnostics = true;
             config_.publish_interval_ms = 500;   // 2Hz
-            break;
-            
-        case DebugLevel::DEVELOPER:
-            config_.enable_performance_metrics = true;
-            config_.enable_timing_diagnostics = true;
-            config_.enable_memory_diagnostics = true;
-            config_.enable_communication_diagnostics = true;
-            config_.publish_interval_ms = 250;   // 4Hz
             break;
     }
 }
