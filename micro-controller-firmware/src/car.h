@@ -48,6 +48,7 @@
 #define DRIVE_STALL_REDUCTION 250
 #define DRIVE_MAX_STALL_COUNT 5
 #define MAX_STEP_ACCEL 200.0f
+#define MIN_SPEED_THRESHOLD 0.1f  // Minimum speed to consider as "stopped"
 
 // Steering hold disable parameters
 #define STEERING_HOLD_DISABLE_SPEED_THRESHOLD 1.0f  // RPM threshold to disable steering hold

@@ -216,6 +216,15 @@ bool tmc5160_recover(TMC5160Stepper& drv, int ENN_PIN) {
 void DriveMotor::setSpeed(float rpm) {
   target_steps_per_sec = (abs(rpm) / 60.0f) * MOTOR_STEPS * MICROSTEPS;
   target_rpm = rpm;
+  
+  // Set direction immediately
+  driver.shaft(rpm < 0);
+  
+  // If target is below minimum threshold, stop immediately
+  if (abs(rpm) < MIN_SPEED_THRESHOLD) {
+    driver.VMAX(0);
+    step_rate_cmd = 0;
+  }
 }
 
 
@@ -238,7 +247,7 @@ void DriveMotor::updateControlLoop() {
   uint32_t dt = now - last_time;
   int32_t delta_enc = current_enc - last_enc;
   
-  // Avoid division by zero
+  // Avoid division by zero and handle timing
   if (dt > 0) {
     float measured_ticks_per_sec = (float)delta_enc * 1e6f / dt;
     float measured_steps_per_sec = measured_ticks_per_sec * (MOTOR_STEPS * MICROSTEPS / ENCODER_TICKS_PER_REVOLUTION);
@@ -247,26 +256,27 @@ void DriveMotor::updateControlLoop() {
     // Calculate current RPM
     current_rpm = (measured_steps_per_sec / (MOTOR_STEPS * MICROSTEPS)) * 60.0f;
 
+    // Calculate error and apply control logic
     float error = target_steps_per_sec - measured_steps_per_sec;
-    int32_t adjustment = (int32_t)(error * DRIVE_ERROR_GAIN);
-
+    
+    // Stall detection and recovery
     if (measured_steps_per_sec < (DRIVE_STALL_THRESHOLD * step_rate_cmd)) {
       stall_counter++;
     } else {
       stall_counter = 0;
     }
 
+    // Apply stall recovery or normal control
     if (stall_counter > DRIVE_MAX_STALL_COUNT) {
       step_rate_cmd -= DRIVE_STALL_REDUCTION * stall_counter;
-      if ((int32_t)step_rate_cmd < 0) step_rate_cmd = 0;
     } else {
+      int32_t adjustment = (int32_t)(error * DRIVE_ERROR_GAIN);
       step_rate_cmd += adjustment;
-      if ((int32_t)step_rate_cmd < 0) step_rate_cmd = 0;
     }
 
-    // Limit rate of change - more aggressive for better responsiveness
-    float max_step_change = MAX_STEP_ACCEL * (dt / 1e6f);  // steps/sec
-
+    // Limit rate of change for smooth acceleration/deceleration
+    float max_step_change = MAX_STEP_ACCEL * (dt / 1e6f);
+    
     if (target_steps_per_sec > step_rate_cmd + max_step_change) {
       step_rate_cmd += max_step_change;
     } else if (target_steps_per_sec < step_rate_cmd - max_step_change) {
@@ -275,14 +285,15 @@ void DriveMotor::updateControlLoop() {
       step_rate_cmd = target_steps_per_sec;
     }
     
-    // Additional responsiveness boost for small errors
+    // Responsiveness boost for small errors
     if (fabsf(error) < 100.0f && target_steps_per_sec > 0) {
-      step_rate_cmd = target_steps_per_sec;  // Direct assignment for small errors
+      step_rate_cmd = target_steps_per_sec;
     }
 
-    // Clamp to non-negative
+    // Clamp to non-negative values
     if (step_rate_cmd < 0.0f) step_rate_cmd = 0.0f;
 
+    // Apply motor commands
     driver.VMAX(step_rate_cmd);
     driver.shaft(target_rpm < 0);
   }
@@ -331,7 +342,8 @@ void Car::updateControlLoops() {
       steeringMotor.setPositionHoldEnabled(true);
     } else {
       // Disable position hold when moving slowly or stopped
-      steeringMotor.setPositionHoldEnabled(false);
+      // steeringMotor.setPositionHoldEnabled(false);
+      steeringMotor.setPositionHoldEnabled(true);
     }
     
     unlock();
