@@ -201,4 +201,7 @@ private:
   void unlock();
 };
 
+// TMC5160 recovery function
+bool tmc5160_recover(TMC5160Stepper& drv, int ENN_PIN);
+
 #endif // CAR_H   

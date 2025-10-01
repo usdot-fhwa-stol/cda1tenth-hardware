@@ -241,14 +241,16 @@ bool SteeringMotor::recoverFromFault(FaultType fault) {
       return true;
       
     case STALL_FAULT:
-      // Reset stall counter and resync position
-      stallCounter = 0;
-      float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
-      float stepsPerRev = MOTOR_STEPS * MICROSTEPS;
-      int32_t actualSteps = (int32_t)((currentAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
-      driver.XACTUAL(actualSteps);
-      driver.XTARGET(actualSteps);
-      return true;
+      {
+        // Reset stall counter and resync position
+        stallCounter = 0;
+        float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
+        float stepsPerRev = MOTOR_STEPS * MICROSTEPS;
+        int32_t actualSteps = (int32_t)((currentAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
+        driver.XACTUAL(actualSteps);
+        driver.XTARGET(actualSteps);
+        return true;
+      }
       
     case COMMUNICATION_FAULT:
       // Clear reset flag and reinitialize
@@ -258,12 +260,14 @@ bool SteeringMotor::recoverFromFault(FaultType fault) {
       return true;
       
     case POSITION_ERROR_FAULT:
-      // Force position resync
-      float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
-      float stepsPerRev = MOTOR_STEPS * MICROSTEPS;
-      int32_t actualSteps = (int32_t)((currentAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
-      driver.XACTUAL(actualSteps);
-      return true;
+      {
+        // Force position resync
+        float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
+        float stepsPerRev = MOTOR_STEPS * MICROSTEPS;
+        int32_t actualSteps = (int32_t)((currentAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
+        driver.XACTUAL(actualSteps);
+        return true;
+      }
       
     default:
       return false;
@@ -782,8 +786,8 @@ float Car::getLeftMotorRPM() {
   unlock();
   return leftRPM;
 }
-// SPI-opt
-imized motor control methods
+
+// SPI-optimized motor control methods
 void DriveMotor::updateControlLoop(const SensorData& cached_data, SPIManager* spi_mgr) {
   // Non-blocking status check using SPI manager
   if (!checkStatusNonBlocking(spi_mgr)) {
