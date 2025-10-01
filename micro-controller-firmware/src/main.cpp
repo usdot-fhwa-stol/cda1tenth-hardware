@@ -53,6 +53,16 @@ std_msgs__msg__Float32MultiArray motor_rpm_msg;
 // Debug publisher - using simple approach
 rcl_publisher_t debug_publisher;
 std_msgs__msg__Float32MultiArray debug_msg;
+
+// Odometry variables
+rcl_publisher_t odom_publisher;
+rcl_timer_t odom_timer;
+float odom_x = 0.0f;
+float odom_y = 0.0f;
+float odom_yaw = 0.0f;
+float odom_wheel_radius = 0.03f;
+unsigned int odom_period_ms = 20;
+uint32_t odom_last_ms = 0;
  
 // Additional ROS2 objects
 rcl_subscription_t geom_subscriber;
@@ -188,16 +198,6 @@ bool car_initialized = false;
 TaskHandle_t updateTaskHandle = NULL;
 TaskHandle_t microRosTaskHandle = NULL;
 
-// Odometry variables
-rcl_publisher_t odom_publisher;
-rcl_timer_t odom_timer;
-float odom_x = 0.0f;
-float odom_y = 0.0f;
-float odom_yaw = 0.0f;
-float odom_wheel_radius = 0.03f;
-unsigned int odom_period_ms = 20;
-uint32_t odom_last_ms = 0;
- 
 // IMU instance
 LSM6DSO IMU;
  
