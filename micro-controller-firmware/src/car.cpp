@@ -69,6 +69,13 @@ void SteeringMotor::updatePosition() {
   uint32_t now = micros();
   if (now - lastCorrectionMicros < STEERING_CORRECTION_INTERVAL) return;
   lastCorrectionMicros = now;
+  
+  // Additional throttling for SPI operations
+  static uint32_t last_spi_operation = 0;
+  if (now - last_spi_operation < 20000) {  // Only do SPI operations every 20ms
+    return;
+  }
+  last_spi_operation = now;
 
   // Read actual steering angle from sensor
   float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
@@ -101,6 +108,17 @@ void SteeringMotor::updatePosition() {
 
 void SteeringMotor::applySpeed() {
   // Empty: internal logic controls speed automatically
+}
+
+void SteeringMotor::setPositionHoldEnabled(bool enabled) {
+  if (enabled) {
+    // Enable position hold - set to positioning mode
+    driver.RAMPMODE(0); // Positioning mode
+  } else {
+    // Disable position hold - set to velocity mode with zero velocity
+    driver.RAMPMODE(2); // Velocity mode
+    driver.VMAX(0);      // Zero velocity
+  }
 }
 
 
@@ -177,13 +195,21 @@ void DriveMotor::setSpeed(float rpm) {
 }
 
 void DriveMotor::updateControlLoop() {
+  uint32_t now = micros();
+  
+  // Throttle SPI operations to prevent blocking
+  static uint32_t last_spi_read = 0;
+  if (now - last_spi_read < 10000) {  // Only read SPI every 10ms
+    return;
+  }
+  last_spi_read = now;
+  
   if (driver.GSTAT() & (1 << 2)) { // Check for UV_CP fault
     if (!tmc5160_recover(driver, EN_PIN)) {
       return; // Recovery failed, do not proceed
     }
   }
   int32_t current_enc = driver.X_ENC();
-  uint32_t now = micros();
   uint32_t dt = now - last_time;
   int32_t delta_enc = current_enc - last_enc;
   
@@ -239,6 +265,11 @@ float DriveMotor::getCurrentRPM() {
   return current_rpm;
 }
 
+float DriveMotor::getCurrentRPMAtomic() {
+  return current_rpm;  // Direct access to volatile variable
+}
+
+
 Car::Car(int rightCS, int leftCS, int steerCS)
   : rightMotor(rightCS), leftMotor(leftCS), steeringMotor(steerCS) {
     carMutex = xSemaphoreCreateMutex();
@@ -252,12 +283,28 @@ void Car::unlock() {
   xSemaphoreGive(carMutex);
 }
 
+bool Car::tryLock(uint32_t timeoutMs) {
+  return xSemaphoreTake(carMutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+}
+
 void Car::updateControlLoops() {
-  lock();
-  rightMotor.updateControlLoop();
-  leftMotor.updateControlLoop();
-  steeringMotor.updatePosition();
-  unlock();
+  // Use non-blocking lock to prevent deadlocks
+  if (tryLock(5)) {  // 5ms timeout
+    rightMotor.updateControlLoop();
+    leftMotor.updateControlLoop();
+    
+    // Only update steering position if car is moving fast enough
+    if (isMovingFastEnough()) {
+      steeringMotor.setPositionHoldEnabled(true);
+      steeringMotor.updatePosition();
+    } else {
+      // Disable position hold when moving slowly or stopped
+      steeringMotor.setPositionHoldEnabled(false);
+    }
+    
+    unlock();
+  }
+  // If lock fails, skip this update cycle to prevent blocking
 }
 
 void Car::begin() {
@@ -267,39 +314,43 @@ void Car::begin() {
 }
 
 void Car::setSteeringAngle(float angle) {
-  lock();
-  steeringAngle = angle;
-  steeringMotor.setTargetAngle(angle);
-  unlock();
+  if (tryLock(5)) {  // 5ms timeout
+    steeringAngle = angle;
+    steeringMotor.setTargetAngle(angle);
+    unlock();
+  }
+  // If lock fails, skip this update to prevent blocking
 }
 
 void Car::setSpeed(float rpm, float wheelbase, float trackWidth) {
-  lock();
-  speed = rpm;
+  if (tryLock(5)) {  // 5ms timeout
+    speed = rpm;
 
-  // steeringAngle is stored in degrees in this class; convert to radians for trig
-  const float steeringAngleRad = steeringAngle * (M_PI / 180.0f);
-  constexpr float minTurnAngle = 0.01f; // radians
+    // steeringAngle is stored in degrees in this class; convert to radians for trig
+    const float steeringAngleRad = steeringAngle * (M_PI / 180.0f);
+    constexpr float minTurnAngle = 0.01f; // radians
 
-  if (fabsf(steeringAngleRad) < minTurnAngle) {
-    rightMotor.setSpeed(rpm);
-    leftMotor.setSpeed(-rpm);
+    if (fabsf(steeringAngleRad) < minTurnAngle) {
+      rightMotor.setSpeed(rpm);
+      leftMotor.setSpeed(-rpm);
+      unlock();
+      return;
+    }
+
+    float R = wheelbase / tanf(steeringAngleRad);
+    float R_L = R - (trackWidth / 2.0f);
+    float R_R = R + (trackWidth / 2.0f);
+
+    float v_L = rpm * (R_L / R);
+    float v_R = rpm * (R_R / R);
+
+    rightMotor.setSpeed(v_R);
+
+    // left motor requires opposite rotation of right motor due to mirroring on car
+    leftMotor.setSpeed(-v_L);
     unlock();
-    return;
   }
-
-  float R = wheelbase / tanf(steeringAngleRad);
-  float R_L = R - (trackWidth / 2.0f);
-  float R_R = R + (trackWidth / 2.0f);
-
-  float v_L = rpm * (R_L / R);
-  float v_R = rpm * (R_R / R);
-
-  rightMotor.setSpeed(v_R);
-
-  // left motor requires opposite rotation of right motor due to mirroring on car
-  leftMotor.setSpeed(-v_L);
-  unlock();
+  // If lock fails, skip this update to prevent blocking
 }
 
 float Car::getRightMotorRPM() {
@@ -314,4 +365,23 @@ float Car::getLeftMotorRPM() {
   float leftRPM = leftMotor.getCurrentRPM();
   unlock();
   return leftRPM;
+}
+
+float Car::getRightMotorRPMAtomic() {
+  return rightMotor.getCurrentRPMAtomic();
+}
+
+float Car::getLeftMotorRPMAtomic() {
+  return leftMotor.getCurrentRPMAtomic();
+}
+
+bool Car::isMovingFastEnough() {
+  // Check if either motor is moving fast enough to warrant steering hold
+  float rightRPM = getRightMotorRPMAtomic();
+  float leftRPM = getLeftMotorRPMAtomic();
+  
+  // Use the absolute value to check speed regardless of direction
+  float avgSpeed = (fabsf(rightRPM) + fabsf(leftRPM)) / 2.0f;
+  
+  return avgSpeed >= STEERING_HOLD_DISABLE_SPEED_THRESHOLD;
 }

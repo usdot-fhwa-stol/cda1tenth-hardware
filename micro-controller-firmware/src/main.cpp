@@ -570,7 +570,7 @@ void loop() {
     case AGENT_CONNECTED:
       EXECUTE_EVERY_N_MS(2000, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
       if (state == AGENT_CONNECTED) {
-        rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
+        rclc_executor_spin_some(&executor, RCL_MS_TO_NS(2));
       }
       break;
     case AGENT_DISCONNECTED:
@@ -592,9 +592,9 @@ void loop() {
     last_debug_output = now;
   }
   
-  // Control loops with very conservative timing to prevent blocking ROS
+  // Control loops with improved timing for better responsiveness
   static uint32_t last_control_update = 0;
-  if (car_initialized && (now - last_control_update > 2000)) { // Every 2 seconds instead of 200ms
+  if (car_initialized && (now - last_control_update > 100)) { // Every 100ms for better control
     car.updateControlLoops();
     last_control_update = now;
   }

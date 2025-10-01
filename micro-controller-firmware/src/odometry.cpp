@@ -65,8 +65,9 @@ namespace {
     if (now_ms - last_sensor_read > 200) {
       // These operations are still blocking but much less frequent
       cached_gyro_z = IMU.readFloatGyroZ() * (M_PI / 180.0f);
-      cached_right_rpm = car.getRightMotorRPM();
-      cached_left_rpm = car.getLeftMotorRPM();
+      // Use atomic reads to avoid mutex contention
+      cached_right_rpm = car.getRightMotorRPMAtomic();
+      cached_left_rpm = car.getLeftMotorRPMAtomic();
       last_sensor_read = now_ms;
     }
     

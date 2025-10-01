@@ -49,6 +49,9 @@
 #define DRIVE_MAX_STALL_COUNT 5
 #define MAX_STEP_ACCEL 200.0f
 
+// Steering hold disable parameters
+#define STEERING_HOLD_DISABLE_SPEED_THRESHOLD 1.0f  // RPM threshold to disable steering hold
+
 class SteeringMotor {
 public:
   TMC5160Stepper driver;
@@ -69,6 +72,7 @@ public:
   void updatePosition();
   void applySpeed();
   float normalizeAngle(float angle);
+  void setPositionHoldEnabled(bool enabled);
 };
 
 class DriveMotor {
@@ -80,7 +84,7 @@ public:
   int32_t last_enc = 0;
   uint32_t last_time = 0;
   int stall_counter = 0;
-  float current_rpm = 0.0f;
+  volatile float current_rpm = 0.0f;  // Made volatile for atomic access
   float target_rpm = 0.0f;
 
   DriveMotor(int cs);
@@ -88,6 +92,7 @@ public:
   void setSpeed(float rpm);
   void updateControlLoop();
   float getCurrentRPM();
+  float getCurrentRPMAtomic();  // Non-blocking atomic read
 };
 
 class Car {
@@ -105,11 +110,15 @@ public:
   void setSpeed(float rpm, float wheelbase, float trackWidth);
   float getRightMotorRPM();
   float getLeftMotorRPM();
+  float getRightMotorRPMAtomic();  // Non-blocking atomic read
+  float getLeftMotorRPMAtomic();   // Non-blocking atomic read
+  bool isMovingFastEnough();       // Check if car is moving fast enough for steering hold
 
 private:
   SemaphoreHandle_t carMutex;
   void lock();
   void unlock();
+  bool tryLock(uint32_t timeoutMs = 10);  // Non-blocking lock with timeout
 };
 
 #endif // CAR_H   
