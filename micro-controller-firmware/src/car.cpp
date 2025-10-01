@@ -61,8 +61,11 @@ void SteeringMotor::setTargetAngle(float angle) {
   // Compute new target steps for desired angle
   float targetSteps = (targetAngle / DEGREES_PER_REVOLUTION) * stepsPerRev * STEERING_GEAR_RATIO;
 
-  // Set target for internal motion control
+  // Always set target for movement, regardless of hold state
   driver.XTARGET((int32_t)targetSteps);
+  
+  // Ensure we're in positioning mode for the movement
+  driver.RAMPMODE(0); // Positioning mode
 }
 
 void SteeringMotor::updatePosition() {
@@ -81,7 +84,7 @@ void SteeringMotor::updatePosition() {
   float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
   float error = normalizeAngle(targetAngle - currentAngle);
 
-  // // Stall detection: if angle hasn't changed much, increment counter
+  // Stall detection: if angle hasn't changed much, increment counter
   if (fabsf(currentAngle - lastExternalAngle) < SMALL_MOVEMENT_THRESHOLD) {
     stallCounter++;
   } else {
@@ -92,17 +95,28 @@ void SteeringMotor::updatePosition() {
   float stepsPerRev = MOTOR_STEPS * MICROSTEPS;
   int32_t actualSteps = (int32_t)((currentAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
 
+  // Check if position hold is enabled (controlled by speed)
+  bool positionHoldEnabled = (driver.RAMPMODE() == 0); // Positioning mode means hold is enabled
+
   if (stallCounter > STALL_DETECTION_COUNT) {
     // Full resync: align both actual and target to avoid fighting
     driver.XACTUAL(actualSteps);
-    driver.XTARGET(actualSteps);
+    if (positionHoldEnabled) {
+      driver.XTARGET(actualSteps);
+    }
     stallCounter = 0;
     return;
   }
 
-  // Normal drift correction if error exceeds threshold
+  // Always allow large movements to reach target, regardless of hold state
   if (fabsf(error) > STEERING_MAX_ALLOWED_ERROR) {
     driver.XACTUAL(actualSteps);
+    
+    // Only update target if position hold is enabled (high speed)
+    if (positionHoldEnabled) {
+      int32_t targetSteps = (int32_t)((targetAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
+      driver.XTARGET(targetSteps);
+    }
   }
 }
 
@@ -293,10 +307,12 @@ void Car::updateControlLoops() {
     rightMotor.updateControlLoop();
     leftMotor.updateControlLoop();
     
-    // Only update steering position if car is moving fast enough
+    // Always update steering position to reach target
+    steeringMotor.updatePosition();
+    
+    // Only enable position hold when moving fast enough
     if (isMovingFastEnough()) {
       steeringMotor.setPositionHoldEnabled(true);
-      steeringMotor.updatePosition();
     } else {
       // Disable position hold when moving slowly or stopped
       steeringMotor.setPositionHoldEnabled(false);
