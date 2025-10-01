@@ -393,7 +393,8 @@ bool create_entities()
   // num handles = total_of_subscribers + timers (publisher is not counted)
   // 2 subscriptions + 0 timers = 2 handles initially
   // odometry_init will add 1 more timer = 3 total handles
-  unsigned int number_of_handles = 3;
+  // unsigned int number_of_handles = 3;  // With odometry
+  unsigned int number_of_handles = 2;  // Without odometry
   executor = rclc_executor_get_zero_initialized_executor();
   RCCHECK(rclc_executor_init(&executor, &support.context, number_of_handles, &allocator));
   // Motor RPM timer disabled
@@ -423,13 +424,13 @@ bool create_entities()
   // rclc_parameter_set_double(&param_server, "wheel_radius",   g_wheel_radius);
 
   // Push initial values into odometry
-  odometry_set_period_ms((unsigned)g_odom_period_ms);
-  odometry_set_wheel_radius((float)g_wheel_radius);
+  // odometry_set_period_ms((unsigned)g_odom_period_ms);
+  // odometry_set_wheel_radius((float)g_wheel_radius);
 
-  if (!odometry_init(&node, &support, &executor)) {
-    USBSerial.println("Failed to initialize odometry");
-    return false;
-  }
+  // if (!odometry_init(&node, &support, &executor)) {
+  //   USBSerial.println("Failed to initialize odometry");
+  //   return false;
+  // }
 
   return true;
 }
@@ -463,7 +464,7 @@ void destroy_entities()
   rclc_support_fini(&support);
   // rclc_parameter_server_fini(&param_server, &node);
  
-  odometry_fini(&node);
+  // odometry_fini(&node);
  
   // Motor RPM message disabled - no memory to free
   // if (motor_rpm_msg.data.data != NULL) {
