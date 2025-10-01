@@ -66,6 +66,15 @@ void SteeringMotor::setTargetAngle(float angle) {
   
   // Ensure we're in positioning mode for the movement
   driver.RAMPMODE(0); // Positioning mode
+  
+  // Debug output to help diagnose steering issues
+  static uint32_t last_debug_time = 0;
+  uint32_t now = millis();
+  if (now - last_debug_time > 1000) {  // Debug every second
+    // USBSerial.printf("Steering: Current=%.1f, Target=%.1f, Error=%.1f\n", 
+    //                  currentAngle, targetAngle, normalizeAngle(targetAngle - currentAngle));
+    last_debug_time = now;
+  }
 }
 
 void SteeringMotor::updatePosition() {
@@ -75,7 +84,7 @@ void SteeringMotor::updatePosition() {
   
   // Additional throttling for SPI operations
   static uint32_t last_spi_operation = 0;
-  if (now - last_spi_operation < 10000) {  // Only do SPI operations every 10ms for better responsiveness
+  if (now - last_spi_operation < 5000) {  // Only do SPI operations every 5ms for better steering responsiveness
     return;
   }
   last_spi_operation = now;
@@ -112,11 +121,12 @@ void SteeringMotor::updatePosition() {
   if (fabsf(error) > STEERING_MAX_ALLOWED_ERROR) {
     driver.XACTUAL(actualSteps);
     
-    // Only update target if position hold is enabled (high speed)
-    if (positionHoldEnabled) {
-      int32_t targetSteps = (int32_t)((targetAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
-      driver.XTARGET(targetSteps);
-    }
+    // Always update target to reach desired position
+    int32_t targetSteps = (int32_t)((targetAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
+    driver.XTARGET(targetSteps);
+    
+    // Ensure we're in positioning mode for movement
+    driver.RAMPMODE(0); // Positioning mode
   }
 }
 
@@ -316,7 +326,7 @@ void Car::updateControlLoops() {
     // Always update steering position to reach target
     steeringMotor.updatePosition();
     
-    // Only enable position hold when moving fast enough
+    // Simplified position hold logic - only disable when completely stopped
     if (isMovingFastEnough()) {
       steeringMotor.setPositionHoldEnabled(true);
     } else {
