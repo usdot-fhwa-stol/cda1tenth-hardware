@@ -22,15 +22,28 @@
 #include <geometry_msgs/msg/twist.h>
 #include <std_msgs/msg/float32_multi_array.h>
 #include <math.h>
-#include <nav_msgs/msg/odometry.h>
-#include <rosidl_runtime_c/string_functions.h>
+#include "odometry.h"
  
 // Include car control logic
 #include "car.h"
 #include "debug.h"
- 
+
 #define CS_IMU      14
 #define LED_PIN     37
+
+// Global variable declarations (moved up to be accessible by all functions)
+Car car(CS_RIGHT, CS_LEFT, CS_STEER);
+bool car_initialized = false;
+LSM6DSO IMU;
+
+// Cached sensor data for non-blocking access
+struct SensorData {
+  float gyro_z = 0.0f;
+  float right_rpm = 0.0f;
+  float left_rpm = 0.0f;
+  uint32_t last_update_ms = 0;
+  SemaphoreHandle_t mutex;
+} sensorData;
  
 #define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){return false;}}
 #define EXECUTE_EVERY_N_MS(MS, X)  do { \
@@ -54,132 +67,15 @@ std_msgs__msg__Float32MultiArray motor_rpm_msg;
 rcl_publisher_t debug_publisher;
 std_msgs__msg__Float32MultiArray debug_msg;
 
-// Odometry variables
-rcl_publisher_t odom_publisher;
-rcl_timer_t odom_timer;
-float odom_x = 0.0f;
-float odom_y = 0.0f;
-float odom_yaw = 0.0f;
-float odom_wheel_radius = 0.03f;
-unsigned int odom_period_ms = 20;
-uint32_t odom_last_ms = 0;
- 
+// Static debug data array to avoid malloc/free
+static float debug_data_array[35]; // Expanded for detailed debugging
+
 // Additional ROS2 objects
 rcl_subscription_t geom_subscriber;
 geometry_msg__msg__VehicleGeometry geom_msg;
 geometry_msgs__msg__Twist twist_msg;
-
-// rclc_parameter_server_t param_server;
-// static double param_wheelbase = 0.185;
-unsigned int g_odom_period_ms = 100; // 10Hz odometry for maximum stability
-float g_wheel_radius = 0.03;
-
-// Odometry helper functions
-geometry_msgs__msg__Quaternion yaw_to_quaternion(float yaw_rad) {
-  geometry_msgs__msg__Quaternion q;
-  q.x = 0.0;
-  q.y = 0.0;
-  q.z = sinf(yaw_rad / 2.0f);
-  q.w = cosf(yaw_rad / 2.0f);
-  return q;
-}
-
-void odom_timer_callback(rcl_timer_t *timer, int64_t) {
-  if (!timer || !car_initialized) return;
-  
-  // Debug counter
-  odom_publish_count++;
-  
-  uint32_t now_ms = millis();
-  float dt = (odom_last_ms == 0) ? 0.0f : (now_ms - odom_last_ms) / 1000.0f;
-  odom_last_ms = now_ms;
-
-  // Use static cached values to avoid ANY blocking operations
-  static float cached_gyro_z = 0.0f;
-  static float cached_right_rpm = 0.0f;
-  static float cached_left_rpm = 0.0f;
-  static uint32_t last_sensor_read = 0;
-  
-  // Only read sensors every 100ms to minimize blocking
-  if (now_ms - last_sensor_read > 100) {
-    // These operations are still blocking but much less frequent
-    cached_gyro_z = IMU.readFloatGyroZ() * (M_PI / 180.0f);
-    // Use atomic reads to avoid mutex contention
-    cached_right_rpm = car.getRightMotorRPMAtomic();
-    cached_left_rpm = car.getLeftMotorRPMAtomic();
-    last_sensor_read = now_ms;
-  }
-  
-  odom_yaw += cached_gyro_z * dt;
-  
-  float avg_rpm = 0.5f * (cached_right_rpm + cached_left_rpm);
-  float v = (avg_rpm / 60.0f) * 2.0f * M_PI * odom_wheel_radius;
-
-  odom_x += v * cosf(odom_yaw) * dt;
-  odom_y += v * sinf(odom_yaw) * dt;
-
-  // Use static message to avoid repeated allocation/deallocation
-  static nav_msgs__msg__Odometry odom;
-  static bool odom_initialized = false;
-  
-  if (!odom_initialized) {
-    nav_msgs__msg__Odometry__init(&odom);
-    rosidl_runtime_c__String__assign(&odom.header.frame_id, "odom");
-    rosidl_runtime_c__String__assign(&odom.child_frame_id, "base_link");
-    odom_initialized = true;
-  }
-
-  odom.pose.pose.position.x = odom_x;
-  odom.pose.pose.position.y = odom_y;
-  odom.pose.pose.orientation = yaw_to_quaternion(odom_yaw);
-
-  odom.pose.covariance[0]  = 0.2;
-  odom.pose.covariance[7]  = 0.2;
-  odom.pose.covariance[35] = 0.4;
-
-  odom.twist.twist.linear.x  = v;
-  odom.twist.twist.angular.z = cached_gyro_z;
-
-  (void) rcl_publish(&odom_publisher, &odom, nullptr);
-}
-
-bool odometry_init(rcl_node_t* node, rclc_support_t* support, rclc_executor_t* executor) {
-  if (rclc_publisher_init_default(
-        &odom_publisher, node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
-        "odom") != RCL_RET_OK) return false;
-
-  if (rclc_timer_init_default(
-        &odom_timer, support, RCL_MS_TO_NS(odom_period_ms), odom_timer_callback) != RCL_RET_OK) return false;
-
-  if (rclc_executor_add_timer(executor, &odom_timer) != RCL_RET_OK) return false;
-
-  odom_last_ms = 0;
-  return true;
-}
-
-void odometry_fini(rcl_node_t* node) {
-  (void) rcl_timer_fini(&odom_timer);
-  (void) rcl_publisher_fini(&odom_publisher, node);
-}
-
-void odometry_reset(float x, float y, float yaw_rad) {
-  odom_x = x;
-  odom_y = y;
-  odom_yaw = yaw_rad;
-  odom_last_ms = 0;
-}
-
-void odometry_set_period_ms(unsigned int period_ms) {
-  odom_period_ms = period_ms;
-  // Note: Timer recreation would need to be handled in the main loop
-}
-
-void odometry_set_wheel_radius(float r) {
-  odom_wheel_radius = r;
-}
  
- 
+// Vehicle geometry variables
 float g_wheelbase = 0.185f;
 float g_track_width = 0.15f;
  
@@ -190,16 +86,10 @@ float o_speed_scaling_factor = 4.0f; // Factor to scale the speed command
 // Steering control constants
 const float MAX_STEERING_ANGLE = 45.0f; // degrees
  
-// Car control instance
-Car car(CS_RIGHT, CS_LEFT, CS_STEER);
-
 // Car initialization flags
-bool car_initialized = false;
 TaskHandle_t updateTaskHandle = NULL;
 TaskHandle_t microRosTaskHandle = NULL;
-
-// IMU instance
-LSM6DSO IMU;
+TaskHandle_t sensorTaskHandle = NULL;
  
 // Declare USBSerial object
 USBCDC USBSerial;
@@ -220,12 +110,82 @@ static uint32_t led_blink_count = 0;
 
 // Debug counters
 uint32_t twist_callback_count = 0;
-uint32_t odom_publish_count = 0;
+
+// Performance monitoring variables
+static uint32_t last_loop_start = 0;
+static uint32_t max_loop_time = 0;
+static uint32_t total_loop_time = 0;
+static uint32_t loop_count = 0;
+static uint32_t last_reset_reason = 0;
+
+// Loop timing breakdown for debugging
+static uint32_t max_ros_spin_time = 0;
+static uint32_t max_sensor_time = 0;
+static uint32_t max_control_time = 0;
+
+// Detailed timing variables for debugging
+static uint32_t max_steering_time = 0;
+static uint32_t max_drive_time = 0;
+static uint32_t max_odom_time = 0;
+static uint32_t max_debug_publish_time = 0;
+static uint32_t max_led_update_time = 0;
+
+// State transition tracking
+static uint32_t state_transition_count = 0;
+static uint32_t last_state = 0;
+static uint32_t connection_failures = 0;
+static uint32_t executor_timeouts = 0;
  
 typedef struct {
   TickType_t last_wake_time;
   TickType_t interval_ticks;
 } periodic_task_t;
+
+// Sensor reading task - runs in separate FreeRTOS task
+void sensorTask(void *parameter) {
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(100); // Update every 100ms
+  uint32_t error_count = 0;
+  
+  while (true) {
+    if (car_initialized) {
+      // Add error handling for sensor reads
+      float gyro_z = 0.0f;
+      float right_rpm = 0.0f;
+      float left_rpm = 0.0f;
+      
+      // Try to read sensors with timeout protection
+      static uint32_t last_sensor_error = 0;
+      uint32_t now = millis();
+      
+      // Only attempt sensor reads if no recent errors
+      if (now - last_sensor_error > 1000) {
+        gyro_z = IMU.readFloatGyroZ() * (M_PI / 180.0f);
+        right_rpm = car.getRightMotorRPMAtomic();
+        left_rpm = car.getLeftMotorRPMAtomic();
+        
+        // Update cached data with mutex protection (non-blocking)
+        if (xSemaphoreTake(sensorData.mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+          sensorData.gyro_z = gyro_z;
+          sensorData.right_rpm = right_rpm;
+          sensorData.left_rpm = left_rpm;
+          sensorData.last_update_ms = millis();
+          xSemaphoreGive(sensorData.mutex);
+          error_count = 0; // Reset error count on success
+        } else {
+          error_count++;
+          if (error_count > 10) {
+            last_sensor_error = now;
+            error_count = 0;
+          }
+        }
+      }
+    }
+    
+    // Wait for next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
 
 // LED status update function
 void updateLEDStatus() {
@@ -265,63 +225,81 @@ void logDebug(const char* message) {
     static uint32_t last_debug_time = 0;
     uint32_t now = millis();
     
-    // Only publish debug messages every 5 seconds to avoid spam
-    if (now - last_debug_time > 5000) {
-      // Ensure data array is allocated
-      if (debug_msg.data.data == NULL) {
-        debug_msg.data.data = (float*)malloc(3 * sizeof(float));
-        debug_msg.data.capacity = 3;
-      }
+     if (now - last_debug_time > 1000) { // Every 1 second
+       // Use static array - no malloc/free needed
+       debug_msg.data.data = debug_data_array;
+       debug_msg.data.capacity = 35;
+       debug_msg.data.size = 35;
       
-      if (debug_msg.data.data != NULL) {
-        debug_msg.data.size = 3;
-        debug_msg.data.data[0] = (float)twist_callback_count;
-        debug_msg.data.data[1] = (float)odom_publish_count;
-        debug_msg.data.data[2] = (float)state;
-        
-        // Use non-blocking publish
-        rcl_ret_t ret = rcl_publish(&debug_publisher, &debug_msg, NULL);
-        if (ret != RCL_RET_OK) {
-          // If publish fails, don't try again immediately
-          last_debug_time = now + 1000; // Wait extra second on failure
-        } else {
-          last_debug_time = now;
-        }
+      // Basic system metrics
+      debug_msg.data.data[0] = (float)twist_callback_count;
+      debug_msg.data.data[1] = (float)odom_state.publish_count;
+      debug_msg.data.data[2] = (float)state;
+      debug_msg.data.data[3] = (float)ESP.getFreeHeap(); // Free heap in bytes
+      debug_msg.data.data[4] = (float)ESP.getHeapSize(); // Total heap size
+      
+      // Motor and sensor metrics
+      debug_msg.data.data[5] = sensorData.right_rpm; // Right motor RPM
+      debug_msg.data.data[6] = sensorData.left_rpm;  // Left motor RPM
+      debug_msg.data.data[7] = sensorData.gyro_z;    // Gyro Z (rad/s)
+      
+      // Odometry position
+      debug_msg.data.data[8] = odom_state.x;  // X position
+      debug_msg.data.data[9] = odom_state.y; // Y position
+      
+      // ESP Performance metrics
+      debug_msg.data.data[10] = (float)max_loop_time; // Max loop time (ms)
+      debug_msg.data.data[11] = (float)(total_loop_time / max(1U, loop_count)); // Avg loop time (ms)
+      debug_msg.data.data[12] = (float)ESP.getCpuFreqMHz(); // CPU frequency (MHz)
+      debug_msg.data.data[13] = (float)ESP.getCycleCount() / 1000000.0f; // CPU cycles (millions)
+      debug_msg.data.data[14] = (float)ESP.getFreePsram(); // Free PSRAM (bytes)
+      debug_msg.data.data[15] = (float)ESP.getPsramSize(); // Total PSRAM (bytes)
+      debug_msg.data.data[16] = 25.0f; // Temperature placeholder (C)
+      debug_msg.data.data[17] = (float)last_reset_reason; // Reset reason code
+      
+      // Timing breakdown for debugging
+      debug_msg.data.data[18] = (float)max_ros_spin_time; // Max ROS spin time (ms)
+      debug_msg.data.data[19] = (float)max_sensor_time;   // Max sensor read time (ms)
+      debug_msg.data.data[20] = (float)max_control_time;  // Max control time (ms)
+      
+      // Odometry publish status
+      extern uint32_t odom_publish_success_count;
+      extern uint32_t odom_publish_failure_count;
+      debug_msg.data.data[21] = (float)odom_publish_success_count; // Successful publishes
+      debug_msg.data.data[22] = (float)odom_publish_failure_count; // Failed publishes
+      
+       // Publisher initialization status (from odometry.cpp)
+       extern rcl_ret_t publisher_init_result;
+       debug_msg.data.data[23] = (float)publisher_init_result; // Publisher init result
+       
+       // Detailed timing metrics
+       debug_msg.data.data[24] = (float)max_steering_time; // Max steering update time (ms)
+       debug_msg.data.data[25] = (float)max_drive_time; // Max drive motor update time (ms)
+       debug_msg.data.data[26] = (float)max_odom_time; // Max odometry time (ms)
+       debug_msg.data.data[27] = (float)max_debug_publish_time; // Max debug publish time (ms)
+       debug_msg.data.data[28] = (float)max_led_update_time; // Max LED update time (ms)
+       
+       // State transition tracking
+       debug_msg.data.data[29] = (float)state_transition_count; // State transitions
+       debug_msg.data.data[30] = (float)connection_failures; // Connection failures
+       debug_msg.data.data[31] = (float)executor_timeouts; // Executor timeouts
+       
+       // Memory and task metrics
+       debug_msg.data.data[32] = (float)uxTaskGetNumberOfTasks(); // Number of FreeRTOS tasks
+       debug_msg.data.data[33] = (float)uxTaskGetStackHighWaterMark(NULL); // Main task stack high water mark
+       debug_msg.data.data[34] = (float)(millis() % 100000); // System uptime (mod 100k for space)
+       
+       // Use non-blocking publish
+       rcl_ret_t ret = rcl_publish(&debug_publisher, &debug_msg, NULL);
+      if (ret != RCL_RET_OK) {
+        // Store error for monitoring (avoid blocking in callback)
+        static rcl_ret_t last_debug_error = RCL_RET_OK;
+        last_debug_error = ret;
       }
+      last_debug_time = now;
     }
   }
 }
- 
-// Motor RPM timer callback disabled for stability
-// void motor_rpm_timer_callback(rcl_timer_t * timer, int64_t last_call_time)
-// {
-//   (void) last_call_time;
-//   if (timer != NULL && car_initialized) {
-//     // Use cached values from car control task to avoid blocking SPI
-//     static float cached_right_rpm = 0.0f;
-//     static float cached_left_rpm = 0.0f;
-//     static float cached_steering_angle = 0.0f;
-//     static uint32_t last_update = 0;
-//     
-//     // Only update cache every 50ms to reduce SPI blocking
-//     uint32_t now = millis();
-//     if (now - last_update > 50) {
-//       cached_right_rpm = car.getRightMotorRPM();
-//       cached_left_rpm = car.getLeftMotorRPM();
-//       cached_steering_angle = car.steeringMotor.getSteeringAngle();
-//       last_update = now;
-//     }
-//    
-//     // Set up the message
-//     motor_rpm_msg.data.size = 3;
-//     motor_rpm_msg.data.data[0] = cached_right_rpm;
-//     motor_rpm_msg.data.data[1] = cached_left_rpm;
-//     motor_rpm_msg.data.data[2] = cached_steering_angle;
-//    
-//     // Publish motor RPM data
-//     rcl_publish(&motor_rpm_publisher, &motor_rpm_msg, NULL);
-//   }
-// }
  
 float getSteeringAngle(float omega, float vel) {
   if (omega == 0.0f || vel == 0.0f) {
@@ -333,21 +311,42 @@ float getSteeringAngle(float omega, float vel) {
 void twist_callback(const void * msgin) {
   twist_callback_count++; // Increment counter
   
-  // Force debug log on every twist callback to see if it's being called
-  logDebug("twist_received");
-  
   if (!car_initialized) {
     return; // Don't process if car not ready
   }
   
   const auto * twist = static_cast<const geometry_msgs__msg__Twist *>(msgin);
+  
+  // Value-based rate limiting: only process if values have changed significantly
+  static float last_linear_x = 0.0f;
+  static float last_angular_z = 0.0f;
+  const float threshold = 0.01f; // 1cm/s or 0.01 rad/s threshold
+  
+  bool linear_changed = fabsf(twist->linear.x - last_linear_x) > threshold;
+  bool angular_changed = fabsf(twist->angular.z - last_angular_z) > threshold;
+  
+  // Always process if either value changed significantly, or if both are zero (stop command)
+  if (!linear_changed && !angular_changed && (twist->linear.x != 0.0f || twist->angular.z != 0.0f)) {
+    return; // Skip processing if values haven't changed significantly
+  }
+  
+  // Update stored values
+  last_linear_x = twist->linear.x;
+  last_angular_z = twist->angular.z;
  
   // Use bicycle model for proper steering angle calculation
   float steering_angle_deg = getSteeringAngle(twist->angular.z, twist->linear.x);
   float speed_rpm = twist->linear.x * o_speed_scaling_factor * 60.0f / (M_PI * 0.06f);
  
-  // Update car control without mutex to avoid blocking
-  // This is safe since we're not running control loops
+  // Update car control with safety limits
+  // Limit steering angle to prevent extreme values
+  if (steering_angle_deg > 30.0f) steering_angle_deg = 30.0f;
+  if (steering_angle_deg < -30.0f) steering_angle_deg = -30.0f;
+  
+  // Limit speed to prevent extreme values
+  if (speed_rpm > 1000.0f) speed_rpm = 1000.0f;
+  if (speed_rpm < -1000.0f) speed_rpm = -1000.0f;
+  
   car.setSteeringAngle(steering_angle_deg);
   car.setSpeed(speed_rpm, g_wheelbase, g_track_width);
 }
@@ -431,27 +430,7 @@ void initializeCar() {
   }
 }
 
-// static bool on_parameter_changed(const Parameter *old_p,
-//                                  const Parameter *new_p,
-//                                  void *)
-// {
-//   if (strcmp(new_p->name.data, "wheelbase") == 0 &&
-//       new_p->value.type == RCLC_PARAMETER_DOUBLE) {
-//     g_wheelbase = (float)new_p->value.double_value;
-//     return true;
-//   }
-//   if (strcmp(new_p->name.data, "odom_period_ms") == 0 &&
-//       new_p->value.type == RCLC_PARAMETER_INT) {
-//     odometry_set_period_ms((unsigned int)new_p->value.integer_value);
-//     return true;
-//   }
-//   if (strcmp(new_p->name.data, "wheel_radius") == 0 &&
-//       new_p->value.type == RCLC_PARAMETER_DOUBLE) {
-//     odometry_set_wheel_radius((float)new_p->value.double_value);
-//     return true;
-//   }
-//   return false; // leave untouched if unknown/wrong type
-// }
+// Parameter callback function removed for simplicity
 
 bool create_entities()
 {
@@ -512,31 +491,16 @@ bool create_entities()
   RCCHECK(rclc_executor_add_subscription(
     &executor, &twist_subscriber, &twist_msg,
     &twist_callback, ON_NEW_DATA));
-  // Ensure spin_some returns promptly to keep the loop responsive
-  rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(10)); // More responsive to messages
+   // Ensure spin_some returns promptly to keep the loop responsive
+   rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(1));
 
-  // Parameter server on this node
-  // rclc_parameter_server_init_default(&param_server, &node);
+  // Parameter server functionality removed for simplicity
 
-  // // Put the server into the executor (so set/get requests are handled)
-  // rclc_executor_add_parameter_server(&executor, &param_server, on_parameter_changed);
-
-  // // Declare parameters
-  // rclc_add_parameter(&param_server, "wheelbase",      RCLC_PARAMETER_DOUBLE);
-  // rclc_add_parameter(&param_server, "odom_period_ms", RCLC_PARAMETER_INT);
-  // rclc_add_parameter(&param_server, "wheel_radius",   RCLC_PARAMETER_DOUBLE);
-
-  // // Set initial values (mirrors your current defaults)
-  // rclc_parameter_set_double(&param_server, "wheelbase",      param_wheelbase);
-  // rclc_parameter_set_int   (&param_server, "odom_period_ms", g_odom_period_ms);
-  // rclc_parameter_set_double(&param_server, "wheel_radius",   g_wheel_radius);
-
-  // Push initial values into odometry
-  odometry_set_period_ms((unsigned)g_odom_period_ms);
-  odometry_set_wheel_radius((float)g_wheel_radius);
+  // Initialize odometry with default values
+  odometry_set_period_ms(50); // 50Hz
+  odometry_set_wheel_radius(0.03f); // 3cm radius
 
   if (!odometry_init(&node, &support, &executor)) {
-    USBSerial.println("Failed to initialize odometry");
     return false;
   }
 
@@ -551,25 +515,31 @@ void destroy_entities()
   }
  
   rmw_context_t * rmw_context = rcl_context_get_rmw_context(&support.context);
-  (void) rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
- 
+  rmw_ret_t rmw_ret = rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
+  if (rmw_ret != RMW_RET_OK) {
+    // Handle rmw error if needed
+  }
+
   // Motor RPM publisher disabled
   // rcl_publisher_fini(&motor_rpm_publisher, &node);
-  rcl_subscription_fini(&geom_subscriber, &node);
-  rcl_subscription_fini(&twist_subscriber, &node);
+  rcl_ret_t ret1 = rcl_subscription_fini(&geom_subscriber, &node);
+  rcl_ret_t ret2 = rcl_subscription_fini(&twist_subscriber, &node);
   // Motor RPM timer disabled
   // rcl_timer_fini(&motor_rpm_timer);
-  rcl_publisher_fini(&debug_publisher, &node);
+  rcl_ret_t ret3 = rcl_publisher_fini(&debug_publisher, &node);
   
-  // Clean up debug message memory
-  if (debug_msg.data.data != NULL) {
-    free(debug_msg.data.data);
-    debug_msg.data.data = NULL;
+  if (ret1 != RCL_RET_OK || ret2 != RCL_RET_OK || ret3 != RCL_RET_OK) {
+    // Handle cleanup errors if needed
   }
+
   
-  rclc_executor_fini(&executor);
-  rcl_node_fini(&node);
-  rclc_support_fini(&support);
+  rcl_ret_t ret4 = rclc_executor_fini(&executor);
+  rcl_ret_t ret5 = rcl_node_fini(&node);
+  rcl_ret_t ret6 = rclc_support_fini(&support);
+  
+  if (ret4 != RCL_RET_OK || ret5 != RCL_RET_OK || ret6 != RCL_RET_OK) {
+    // Handle cleanup errors if needed
+  }
   // rclc_parameter_server_fini(&param_server, &node);
  
   odometry_fini(&node);
@@ -582,6 +552,9 @@ void destroy_entities()
 }
  
 void setup() {
+  // Capture reset reason for debugging
+  last_reset_reason = 0; // Reset reason (simplified)
+  
   // Initialize LED pin for status indication
   pinMode(LED_PIN, OUTPUT);
   
@@ -618,11 +591,20 @@ void setup() {
   debug_msg.data.size = 0;
   debug_msg.data.capacity = 0;
   debug_msg.data.data = NULL;
- 
-  // Motor RPM message disabled for stability
-  // motor_rpm_msg.data.size = 3;
-  // motor_rpm_msg.data.capacity = 3;
-  // motor_rpm_msg.data.data = (float*)malloc(3 * sizeof(float));
+  
+  // Initialize sensor data mutex
+  sensorData.mutex = xSemaphoreCreateMutex();
+  
+  // Create sensor reading task with lower priority and smaller stack
+  xTaskCreatePinnedToCore(
+    sensorTask,           // Task function
+    "SensorTask",         // Task name
+    1024,                 // Reduced stack size
+    NULL,                 // Parameters
+    1,                    // Lower priority (same as main loop)
+    &sensorTaskHandle,    // Task handle
+    1                     // Core 1 (leave core 0 for main loop)
+  );
 }
  
 float angle = 40.00f;
@@ -630,23 +612,36 @@ uint32_t lastApplyMicros = micros();
  
 void testMotorControl() {
   initializeCar();
- 
+
   float steering_angle = car.steeringMotor.getSteeringAngle();
- 
+
   // Set initial speed and angle
   car.setSpeed(200.0f, g_wheelbase, g_track_width);
- 
+
+  // Read and print IMU data
+  if (car_initialized) {
+    float accel_x = IMU.readFloatAccelX();
+    float accel_y = IMU.readFloatAccelY();
+    float accel_z = IMU.readFloatAccelZ();
+    float gyro_x = IMU.readFloatGyroX();
+    float gyro_y = IMU.readFloatGyroY();
+    float gyro_z = IMU.readFloatGyroZ();
+    float temperature = IMU.readTempF();
+    
+    USBSerial.println("=== IMU Data ===");
+    USBSerial.print("Accel X: "); USBSerial.print(accel_x); USBSerial.println(" g");
+    USBSerial.print("Accel Y: "); USBSerial.print(accel_y); USBSerial.println(" g");
+    USBSerial.print("Accel Z: "); USBSerial.print(accel_z); USBSerial.println(" g");
+    USBSerial.print("Gyro X: "); USBSerial.print(gyro_x); USBSerial.println(" dps");
+    USBSerial.print("Gyro Y: "); USBSerial.print(gyro_y); USBSerial.println(" dps");
+    USBSerial.print("Gyro Z: "); USBSerial.print(gyro_z); USBSerial.println(" dps");
+    USBSerial.print("Temperature: "); USBSerial.print(temperature); USBSerial.println(" F");
+    USBSerial.println("================");
+  }
+
   USBSerial.println("Time Elapsed");
   USBSerial.println(steering_angle);
-  delay(50);
- 
-  const uint32_t now = micros();
-  const bool timeElapsed = (now - lastApplyMicros) / 1000 >= 2000;
- 
-  if (!timeElapsed) {
-    return;
-  }
-  lastApplyMicros = now;
+
   car.setSteeringAngle(angle);
   angle = -angle;
   USBSerial.println(angle);
@@ -657,6 +652,17 @@ void loop() {
   static uint32_t last_loop_time = 0;
   uint32_t current_time = millis();
   
+  // Performance monitoring
+  if (last_loop_start > 0) {
+    uint32_t loop_time = current_time - last_loop_start;
+    if (loop_time > max_loop_time) {
+      max_loop_time = loop_time;
+    }
+    total_loop_time += loop_time;
+    loop_count++;
+  }
+  last_loop_start = current_time;
+  
   // Simple watchdog - if loop takes too long, something is blocking
   if (current_time - last_loop_time > 1000) {
     // System might be frozen, try to recover
@@ -666,28 +672,58 @@ void loop() {
   }
   last_loop_time = current_time;
   
-  switch (state) {
-    case WAITING_AGENT:
-      EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;);
-      break;
-    case AGENT_AVAILABLE:
-      state = (true == create_entities()) ? AGENT_CONNECTED : WAITING_AGENT;
-      if (state == WAITING_AGENT) {
-        destroy_entities();
-      };
-      break;
-    case AGENT_CONNECTED:
-      EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
-      if (state == AGENT_CONNECTED) {
-        rclc_executor_spin_some(&executor, RCL_MS_TO_NS(2));
-      }
-      break;
-    case AGENT_DISCONNECTED:
-      destroy_entities();
-      state = WAITING_AGENT;
-      break;
-    default:
-      break;
+  // Time ROS executor operations with watchdog
+  uint32_t ros_start = millis();
+  static uint32_t ros_spin_timeout_count = 0;
+  
+   // Track state transitions
+   if (state != last_state) {
+     state_transition_count++;
+     last_state = state;
+   }
+   
+   switch (state) {
+     case WAITING_AGENT:
+       EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;);
+       break;
+     case AGENT_AVAILABLE:
+       state = (true == create_entities()) ? AGENT_CONNECTED : WAITING_AGENT;
+       if (state == WAITING_AGENT) {
+         connection_failures++;
+         destroy_entities();
+       };
+       break;
+     case AGENT_CONNECTED:
+       EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
+       if (state == AGENT_CONNECTED) {
+         // Use very aggressive timeout to prevent blocking
+         uint32_t ros_start = millis();
+         rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)); // 1ms timeout
+         uint32_t ros_time = millis() - ros_start;
+         
+         // Watchdog: if ROS takes too long, force disconnect
+         if (ros_time > 5) {
+           executor_timeouts++;
+           if (executor_timeouts > 3) {
+             state = AGENT_DISCONNECTED; // Force reconnection
+             executor_timeouts = 0;
+           }
+         } else {
+           executor_timeouts = 0; // Reset on good performance
+         }
+       }
+       break;
+     case AGENT_DISCONNECTED:
+       destroy_entities();
+       state = WAITING_AGENT;
+       break;
+     default:
+       break;
+   }
+  
+  uint32_t ros_time = millis() - ros_start;
+  if (ros_time > max_ros_spin_time) {
+    max_ros_spin_time = ros_time;
   }
 
   // Update LED status to show micro-ROS connection state
@@ -701,9 +737,37 @@ void loop() {
     last_debug_output = now;
   }
   
-  if (car_initialized) {
-    car.updateControlLoops();
-  }
+  // Time control operations
+  uint32_t control_start = millis();
   
-  // No delay - maximum responsiveness for ROS
+   if (car_initialized) {    
+     // Update steering more frequently for responsiveness (every 10ms)
+     static uint32_t last_steering_update = 0;
+     if (now - last_steering_update >= 10) { // 100Hz steering update
+       uint32_t steer_start = millis();
+       car.steeringMotor.updatePosition();
+       uint32_t steer_time = millis() - steer_start;
+       if (steer_time > max_steering_time) {
+         max_steering_time = steer_time;
+       }
+       last_steering_update = now;
+     }
+     
+     // Update drive motors less frequently (every 20ms) for efficiency
+     static uint32_t last_control_update = 0;
+     if (now - last_control_update >= 20) { // 50Hz control loop
+       uint32_t drive_start = millis();
+       car.updateControlLoops();
+       uint32_t drive_time = millis() - drive_start;
+       if (drive_time > max_drive_time) {
+         max_drive_time = drive_time;
+       }
+       last_control_update = now;
+     }
+   }
+  
+  uint32_t control_time = millis() - control_start;
+  if (control_time > max_control_time) {
+    max_control_time = control_time;
+  }
 }

@@ -45,22 +45,18 @@ float SteeringMotor::getSteeringAngle() {
 }
 
 void SteeringMotor::setTargetAngle(float angle) {
+  // Only update if the target has actually changed
+  float newTargetAngle = normalizeAngle(-angle);
+  if (fabsf(newTargetAngle - targetAngle) < 0.1f) {
+    return; // Target hasn't changed significantly, skip update
+  }
+  
+  targetAngle = newTargetAngle;
+  
+  // Simplified target setting - let the position update loop handle resync
   float stepsPerRev = MOTOR_STEPS * MICROSTEPS;
-
-  // Get current actual angle from external encoder
-  float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
-
-  targetAngle = normalizeAngle(-angle);
-
-  // Compute actual motor steps for current real position
-  int32_t actualSteps = (int32_t)((currentAngle / DEGREES_PER_REVOLUTION) * stepsPerRev * STEERING_GEAR_RATIO);
-
-  // Resync internal position to external encoder
-  driver.XACTUAL(actualSteps);
-
-  // Compute new target steps for desired angle
   float targetSteps = (targetAngle / DEGREES_PER_REVOLUTION) * stepsPerRev * STEERING_GEAR_RATIO;
-
+  
   // Set target for internal motion control
   driver.XTARGET((int32_t)targetSteps);
 }
@@ -86,11 +82,8 @@ void SteeringMotor::updatePosition() {
   int32_t actualSteps = (int32_t)((currentAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
 
   if (stallCounter > STALL_DETECTION_COUNT) {
-    // Full resync: align both actual and target to avoid fighting
     driver.XACTUAL(actualSteps);
-    driver.XTARGET(actualSteps);
     stallCounter = 0;
-    return;
   }
 
   // Normal drift correction if error exceeds threshold
@@ -261,26 +254,9 @@ bool Car::tryLock(uint32_t timeoutMs) {
 }
 
 void Car::updateControlLoops() {
-  // Use non-blocking lock to prevent deadlocks
-  if (tryLock(5)) {  // 5ms timeout
-    rightMotor.updateControlLoop();
-    leftMotor.updateControlLoop();
-    
-    // Always update steering position to reach target
-    steeringMotor.updatePosition();
-    
-    // // Simplified position hold logic - only disable when completely stopped
-    // if (isMovingFastEnough()) {
-    //   steeringMotor.setPositionHoldEnabled(true);
-    // } else {
-    //   // Disable position hold when moving slowly or stopped
-    //   // steeringMotor.setPositionHoldEnabled(false);
-    //   steeringMotor.setPositionHoldEnabled(true);
-    // }
-    
-    unlock();
-  }
-  // If lock fails, skip this update cycle to prevent blocking
+  rightMotor.updateControlLoop();
+  leftMotor.updateControlLoop();
+  steeringMotor.updatePosition();
 }
 
 void Car::begin() {
@@ -290,12 +266,17 @@ void Car::begin() {
 }
 
 void Car::setSteeringAngle(float angle) {
-  if (tryLock(5)) {  // 5ms timeout
-    steeringAngle = angle;
+  // Store the target angle immediately (no mutex needed for this)
+  steeringAngle = angle;
+  
+  // Try to set the motor target, but don't block if mutex is busy
+  if (tryLock(1)) {  // Very short timeout - 1ms
     steeringMotor.setTargetAngle(angle);
     unlock();
+  } else {
+    // If mutex is busy, set the target directly (steering is thread-safe for setting targets)
+    steeringMotor.setTargetAngle(angle);
   }
-  // If lock fails, skip this update to prevent blocking
 }
 
 void Car::setSpeed(float rpm, float wheelbase, float trackWidth) {

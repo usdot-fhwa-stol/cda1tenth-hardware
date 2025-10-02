@@ -36,10 +36,10 @@
 #define STEERING_KP 400.0f
 #define STEERING_MAX_SPEED 12000.0f
 #define STEERING_ERROR_THRESHOLD 5.0f
-#define STEERING_CORRECTION_INTERVAL 50000  // 50 ms
+#define STEERING_CORRECTION_INTERVAL 10000  // 10 ms for more responsive steering
 #define STEERING_GEAR_RATIO (55.0f/12.0f) // ≈ 4.5833
-#define STEERING_MAX_ALLOWED_ERROR 2.0f
-#define STALL_DETECTION_COUNT 10 // ~500 ms
+#define STEERING_MAX_ALLOWED_ERROR 5.0f
+#define STALL_DETECTION_COUNT 5
 #define SMALL_MOVEMENT_THRESHOLD 0.5f // degrees
 
 // Drive motor control parameters
