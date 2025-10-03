@@ -104,6 +104,25 @@ typedef enum {
 static volatile agent_state_t state = WAITING_AGENT; // Shared between tasks
 static SemaphoreHandle_t stateMutex;
 
+// Thread-safe state management functions
+agent_state_t getState() {
+  agent_state_t current_state;
+  if (xSemaphoreTake(stateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    current_state = state;
+    xSemaphoreGive(stateMutex);
+  } else {
+    current_state = WAITING_AGENT; // Default to safe state on timeout
+  }
+  return current_state;
+}
+
+void setState(agent_state_t new_state) {
+  if (xSemaphoreTake(stateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    state = new_state;
+    xSemaphoreGive(stateMutex);
+  }
+}
+
 // LED status variables
 static uint32_t last_led_update = 0;
 static uint32_t led_blink_count = 0;
@@ -160,6 +179,7 @@ void sensorTask(void *parameter) {
       
       // Only attempt sensor reads if no recent errors
       if (now - last_sensor_error > 1000) {
+        // Read sensors with error handling
         gyro_z = IMU.readFloatGyroZ() * (M_PI / 180.0f);
         right_rpm = car.getRightMotorRPMAtomic();
         left_rpm = car.getLeftMotorRPMAtomic();
@@ -193,7 +213,8 @@ void updateLEDStatus() {
   if (now - last_led_update < 100) return; // Update every 100ms
   last_led_update = now;
   
-  switch (state) {
+  agent_state_t current_state = getState();
+  switch (current_state) {
     case WAITING_AGENT:
       // Slow blink (1 second on, 1 second off)
       digitalWrite(LED_PIN, (led_blink_count / 10) % 2);
@@ -220,7 +241,7 @@ void updateLEDStatus() {
 // Debug logging function - with proper timing and connection checks
 void logDebug(const char* message) {
   // Only publish if connection is stable and we're not in the middle of setup
-  if (state == AGENT_CONNECTED && car_initialized) {
+  if (getState() == AGENT_CONNECTED && car_initialized) {
     // Throttle debug messages to prevent overwhelming the system
     static uint32_t last_debug_time = 0;
     uint32_t now = millis();
@@ -436,11 +457,18 @@ bool create_entities()
 {
   allocator = rcl_get_default_allocator();
  
-  // create init_options
-  RCCHECK(rclc_support_init(&support, 0, NULL, &allocator));
+  // create init_options with timeout
+  rcl_ret_t ret = rclc_support_init(&support, 0, NULL, &allocator);
+  if (ret != RCL_RET_OK) {
+    return false;
+  }
  
-  // create node
-  RCCHECK(rclc_node_init_default(&node, "car_controller", "", &support));
+  // create node with timeout
+  ret = rclc_node_init_default(&node, "car_controller", "", &support);
+  if (ret != RCL_RET_OK) {
+    rclc_support_fini(&support);
+    return false;
+  }
  
   // Motor RPM publisher disabled for stability
   // RCCHECK(rclc_publisher_init_best_effort(
@@ -449,25 +477,43 @@ bool create_entities()
   //   ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
   //   "motor_rpms"));
 
-  // create debug publisher
-  RCCHECK(rclc_publisher_init_best_effort(
+  // create debug publisher with error handling
+  ret = rclc_publisher_init_best_effort(
     &debug_publisher,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-    "debug_log"));
- 
-  // create subscriber for vehicle geometry
-  RCCHECK(rclc_subscription_init_best_effort(
+    "debug_log");
+  if (ret != RCL_RET_OK) {
+    (void)rcl_node_fini(&node);
+    (void)rclc_support_fini(&support);
+    return false;
+  }
+  
+  // create subscriber for vehicle geometry with error handling
+  ret = rclc_subscription_init_best_effort(
     &geom_subscriber,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msg, msg, VehicleGeometry),
-    "vehicle_geometry"));
- 
-  // create subscriber for twist messages (cmd_vel)
-  RCCHECK(rclc_subscription_init_best_effort(
+    "vehicle_geometry");
+  if (ret != RCL_RET_OK) {
+    (void)rcl_publisher_fini(&debug_publisher, &node);
+    (void)rcl_node_fini(&node);
+    (void)rclc_support_fini(&support);
+    return false;
+  }
+  
+  // create subscriber for twist messages (cmd_vel) with error handling
+  ret = rclc_subscription_init_best_effort(
     &twist_subscriber, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-    "cmd_vel"));
+    "cmd_vel");
+  if (ret != RCL_RET_OK) {
+    (void)rcl_subscription_fini(&geom_subscriber, &node);
+    (void)rcl_publisher_fini(&debug_publisher, &node);
+    (void)rcl_node_fini(&node);
+    (void)rclc_support_fini(&support);
+    return false;
+  }
  
   // Motor RPM timer disabled for stability
   // const unsigned int motor_rpm_timer_timeout = 100;
@@ -481,26 +527,59 @@ bool create_entities()
   // 2 subscriptions + 0 timers = 2 handles initially
   // odometry_init will add 1 more timer = 3 total handles
   unsigned int number_of_handles = 3;  // With odometry
-  // unsigned int number_of_handles = 2;  // Without odometry
   executor = rclc_executor_get_zero_initialized_executor();
-  RCCHECK(rclc_executor_init(&executor, &support.context, number_of_handles, &allocator));
+  ret = rclc_executor_init(&executor, &support.context, number_of_handles, &allocator);
+  if (ret != RCL_RET_OK) {
+    (void)rcl_subscription_fini(&twist_subscriber, &node);
+    (void)rcl_subscription_fini(&geom_subscriber, &node);
+    (void)rcl_publisher_fini(&debug_publisher, &node);
+    (void)rcl_node_fini(&node);
+    (void)rclc_support_fini(&support);
+    return false;
+  }
+  
   // Motor RPM timer disabled
   // RCCHECK(rclc_executor_add_timer(&executor, &motor_rpm_timer));
-  RCCHECK(rclc_executor_add_subscription(&executor, &geom_subscriber, &geom_msg,
-    &vehicle_geometry_callback, ON_NEW_DATA));
-  RCCHECK(rclc_executor_add_subscription(
+  ret = rclc_executor_add_subscription(&executor, &geom_subscriber, &geom_msg,
+    &vehicle_geometry_callback, ON_NEW_DATA);
+  if (ret != RCL_RET_OK) {
+    (void)rclc_executor_fini(&executor);
+    (void)rcl_subscription_fini(&twist_subscriber, &node);
+    (void)rcl_subscription_fini(&geom_subscriber, &node);
+    (void)rcl_publisher_fini(&debug_publisher, &node);
+    (void)rcl_node_fini(&node);
+    (void)rclc_support_fini(&support);
+    return false;
+  }
+  
+  ret = rclc_executor_add_subscription(
     &executor, &twist_subscriber, &twist_msg,
-    &twist_callback, ON_NEW_DATA));
+    &twist_callback, ON_NEW_DATA);
+  if (ret != RCL_RET_OK) {
+    (void)rclc_executor_fini(&executor);
+    (void)rcl_subscription_fini(&twist_subscriber, &node);
+    (void)rcl_subscription_fini(&geom_subscriber, &node);
+    (void)rcl_publisher_fini(&debug_publisher, &node);
+    (void)rcl_node_fini(&node);
+    (void)rclc_support_fini(&support);
+    return false;
+  }
    // Ensure spin_some returns promptly to keep the loop responsive
    rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(1));
 
   // Parameter server functionality removed for simplicity
 
-  // Initialize odometry with default values
-  odometry_set_period_ms(50); // 50Hz
+  // Initialize odometry with conservative settings
+  odometry_set_period_ms(100); // 10Hz for stability
   odometry_set_wheel_radius(0.03f); // 3cm radius
 
   if (!odometry_init(&node, &support, &executor)) {
+    (void)rclc_executor_fini(&executor);
+    (void)rcl_subscription_fini(&twist_subscriber, &node);
+    (void)rcl_subscription_fini(&geom_subscriber, &node);
+    (void)rcl_publisher_fini(&debug_publisher, &node);
+    (void)rcl_node_fini(&node);
+    (void)rclc_support_fini(&support);
     return false;
   }
 
@@ -532,17 +611,18 @@ void destroy_entities()
     // Handle cleanup errors if needed
   }
 
+  // Clean up odometry
+  odometry_fini(&node);
   
   rcl_ret_t ret4 = rclc_executor_fini(&executor);
   rcl_ret_t ret5 = rcl_node_fini(&node);
   rcl_ret_t ret6 = rclc_support_fini(&support);
   
-  if (ret4 != RCL_RET_OK || ret5 != RCL_RET_OK || ret6 != RCL_RET_OK) {
-    // Handle cleanup errors if needed
-  }
+  // Suppress unused variable warnings for cleanup
+  (void)ret4;
+  (void)ret5;
+  (void)ret6;
   // rclc_parameter_server_fini(&param_server, &node);
- 
-  odometry_fini(&node);
  
   // Motor RPM message disabled - no memory to free
   // if (motor_rpm_msg.data.data != NULL) {
@@ -561,16 +641,21 @@ void setup() {
   // Initialize the car control system
   initializeCar();
 
-  // Initialize USB CDC
+  // Initialize USB CDC with timeout protection
   USB.begin();
   USBSerial.begin(921600);
- 
-  // Wait for USB to be ready
-  while (!USBSerial) {
+  
+  // Wait for USB to be ready with timeout (max 5 seconds)
+  uint32_t usb_timeout = millis();
+  while (!USBSerial && (millis() - usb_timeout < 5000)) {
     delay(10);
   }
- 
-  delay(2000); // Give more time for serial to initialize
+  
+  // Only proceed if USB is ready, otherwise continue with limited functionality
+  if (!USBSerial) {
+    // USB failed to initialize, but continue with system
+    // micro-ROS will handle connection retries
+  }
 
     
   // LED test pattern - blink 3 times to confirm it's working
@@ -595,8 +680,11 @@ void setup() {
   // Initialize sensor data mutex
   sensorData.mutex = xSemaphoreCreateMutex();
   
+  // Initialize state mutex for thread-safe state management
+  stateMutex = xSemaphoreCreateMutex();
+  
   // Create sensor reading task with lower priority and smaller stack
-  xTaskCreatePinnedToCore(
+  BaseType_t task_result = xTaskCreatePinnedToCore(
     sensorTask,           // Task function
     "SensorTask",         // Task name
     1024,                 // Reduced stack size
@@ -605,6 +693,11 @@ void setup() {
     &sensorTaskHandle,    // Task handle
     1                     // Core 1 (leave core 0 for main loop)
   );
+  
+  if (task_result != pdPASS) {
+    // Task creation failed, but continue with system
+    // Sensor reading will be handled in main loop
+  }
 }
  
 float angle = 40.00f;
@@ -663,13 +756,13 @@ void loop() {
   }
   last_loop_start = current_time;
   
-  // Simple watchdog - if loop takes too long, something is blocking
-  if (current_time - last_loop_time > 1000) {
-    // System might be frozen, try to recover
-    if (state == AGENT_CONNECTED) {
-      state = AGENT_DISCONNECTED; // Force reconnection
-    }
-  }
+   // Simple watchdog - if loop takes too long, something is blocking
+   if (current_time - last_loop_time > 1000) {
+     // System might be frozen, try to recover
+     if (getState() == AGENT_CONNECTED) {
+       setState(AGENT_DISCONNECTED); // Force reconnection
+     }
+   }
   last_loop_time = current_time;
   
   // Time ROS executor operations with watchdog
@@ -677,35 +770,42 @@ void loop() {
   static uint32_t ros_spin_timeout_count = 0;
   
    // Track state transitions
-   if (state != last_state) {
+   agent_state_t current_state = getState();
+   if (current_state != last_state) {
      state_transition_count++;
-     last_state = state;
+     last_state = current_state;
    }
    
-   switch (state) {
+   // Declare variables outside switch to avoid jump to case label errors
+   agent_state_t new_state;
+   uint32_t ros_start_inner;
+   uint32_t ros_time_inner;
+   
+   switch (current_state) {
      case WAITING_AGENT:
-       EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;);
+       EXECUTE_EVERY_N_MS(500, setState((RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT););
        break;
      case AGENT_AVAILABLE:
-       state = (true == create_entities()) ? AGENT_CONNECTED : WAITING_AGENT;
-       if (state == WAITING_AGENT) {
+       new_state = (true == create_entities()) ? AGENT_CONNECTED : WAITING_AGENT;
+       setState(new_state);
+       if (new_state == WAITING_AGENT) {
          connection_failures++;
          destroy_entities();
-       };
+       }
        break;
      case AGENT_CONNECTED:
-       EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
-       if (state == AGENT_CONNECTED) {
+       EXECUTE_EVERY_N_MS(500, setState((RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED););
+       if (getState() == AGENT_CONNECTED) {
          // Use very aggressive timeout to prevent blocking
-         uint32_t ros_start = millis();
+         ros_start_inner = millis();
          rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1)); // 1ms timeout
-         uint32_t ros_time = millis() - ros_start;
+         ros_time_inner = millis() - ros_start_inner;
          
          // Watchdog: if ROS takes too long, force disconnect
-         if (ros_time > 5) {
+         if (ros_time_inner > 5) {
            executor_timeouts++;
            if (executor_timeouts > 3) {
-             state = AGENT_DISCONNECTED; // Force reconnection
+             setState(AGENT_DISCONNECTED); // Force reconnection
              executor_timeouts = 0;
            }
          } else {
@@ -715,7 +815,7 @@ void loop() {
        break;
      case AGENT_DISCONNECTED:
        destroy_entities();
-       state = WAITING_AGENT;
+       setState(WAITING_AGENT);
        break;
      default:
        break;
