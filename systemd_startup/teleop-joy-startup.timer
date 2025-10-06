@@ -2,7 +2,7 @@
 Description=Start ROS2 teleop nodes on 20-second timer
 
 [Timer]
-OnBootSec=20s
+OnStartupSec=20s
 Unit=teleop-joy-startup.service
 
 [Install]
