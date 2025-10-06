@@ -16,7 +16,7 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 #include <rmw_microros/rmw_microros.h>
-// #include <rclc_parameter/rclc_parameter.h>
+#include <rclc_parameter/rclc_parameter.h>
  
 #include <geometry_msg/msg/vehicle_geometry.h>
 #include <geometry_msgs/msg/twist.h>
@@ -27,6 +27,7 @@
 // Include car control logic
 #include "car.h"
 #include "debug.h"
+#include <rclc_parameter/rclc_parameter.h>
 
 #define CS_IMU      14
 #define LED_PIN     37
@@ -90,6 +91,8 @@ const float MAX_STEERING_ANGLE = 45.0f; // degrees
 TaskHandle_t updateTaskHandle = NULL;
 TaskHandle_t microRosTaskHandle = NULL;
 TaskHandle_t sensorTaskHandle = NULL;
+
+rclc_parameter_server_t param_server;
  
 // Declare USBSerial object
 USBCDC USBSerial;
@@ -307,6 +310,42 @@ float getSteeringAngle(float omega, float vel) {
   }
   return atanf(g_wheelbase * omega / vel) * 180.0f / M_PI;
 }
+
+bool on_parameter_changed(const Parameter * /*old_param*/,
+                          const Parameter * new_param,
+                          void * /*context*/) {
+  if (!new_param || !new_param->name.data) return false;
+
+  if (strcmp(new_param->name.data, "odom_rate_hz") == 0) {
+    double hz = 0.0;
+    if (new_param->value.type == RCLC_PARAMETER_DOUBLE) {
+      hz = new_param->value.double_value;
+    } else if (new_param->value.type == RCLC_PARAMETER_INT) {
+      hz = (double)new_param->value.integer_value;
+    } else {
+      return false;
+    }
+    if (hz < 1.0)  hz = 1.0;
+    if (hz > 100.) hz = 100.0;
+    return odometry_set_rate_hz((float)hz);
+  }
+
+  if (strcmp(new_param->name.data, "odom_period_ms") == 0) {
+    int64_t ms = 0;
+    if (new_param->value.type == RCLC_PARAMETER_INT) {
+      ms = new_param->value.integer_value;
+    } else if (new_param->value.type == RCLC_PARAMETER_DOUBLE) {
+      ms = (int64_t)(new_param->value.double_value);
+    } else {
+      return false;
+    }
+    if (ms < 10)   ms = 10;
+    if (ms > 1000) ms = 1000;
+    return odometry_set_period_ms((unsigned int)ms);
+  }
+
+  return true;
+}
  
 void twist_callback(const void * msgin) {
   twist_callback_count++; // Increment counter
@@ -480,7 +519,7 @@ bool create_entities()
   // num handles = total_of_subscribers + timers (publisher is not counted)
   // 2 subscriptions + 0 timers = 2 handles initially
   // odometry_init will add 1 more timer = 3 total handles
-  unsigned int number_of_handles = 3;  // With odometry
+  unsigned int number_of_handles = 4;  // With odometry
   // unsigned int number_of_handles = 2;  // Without odometry
   executor = rclc_executor_get_zero_initialized_executor();
   RCCHECK(rclc_executor_init(&executor, &support.context, number_of_handles, &allocator));
@@ -494,11 +533,19 @@ bool create_entities()
    // Ensure spin_some returns promptly to keep the loop responsive
    rclc_executor_set_timeout(&executor, RCL_MS_TO_NS(1));
 
-  // Parameter server functionality removed for simplicity
+  RCCHECK(rclc_parameter_server_init_default(&param_server, &node));
 
-  // Initialize odometry with default values
-  odometry_set_period_ms(50); // 50Hz
-  odometry_set_wheel_radius(0.03f); // 3cm radius
+  // Declare defaults (these both declare and set)
+  const double default_hz = 1000.0 / 50.0; // 20 Hz
+  RCCHECK(rclc_parameter_set_double(&param_server, "odom_rate_hz", default_hz));
+  RCCHECK(rclc_parameter_set_int(&param_server, "odom_period_ms", 50));
+
+  // Add server to executor with 3-arg callback (old, new, ctx)
+  RCCHECK(rclc_executor_add_parameter_server(&executor, &param_server, on_parameter_changed));
+
+  // Keep odom defaults in sync
+  odometry_set_period_ms(50);
+  odometry_set_wheel_radius(0.03f);
 
   if (!odometry_init(&node, &support, &executor)) {
     return false;
@@ -541,6 +588,7 @@ void destroy_entities()
     // Handle cleanup errors if needed
   }
   // rclc_parameter_server_fini(&param_server, &node);
+  rclc_parameter_server_fini(&param_server, &node);
  
   odometry_fini(&node);
  

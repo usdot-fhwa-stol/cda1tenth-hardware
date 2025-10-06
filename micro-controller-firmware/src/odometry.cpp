@@ -24,6 +24,7 @@ rcl_ret_t publisher_init_result = RCL_RET_OK;
 // ROS2 objects
 rcl_publisher_t odom_publisher;
 rcl_timer_t odom_timer;
+static bool s_timer_initialized = false;
 
 // Helper function to convert yaw to quaternion
 geometry_msgs__msg__Quaternion yaw_to_quaternion(float yaw_rad) {
@@ -37,6 +38,25 @@ geometry_msgs__msg__Quaternion yaw_to_quaternion(float yaw_rad) {
 
 // External car initialization flag
 extern bool car_initialized;
+
+bool odometry_set_period_ms(unsigned int period_ms) {
+  if (period_ms == 0) return false;
+  odom_config.period_ms = period_ms;
+  if (s_timer_initialized) {
+    // Update the already-added timer’s period
+    int64_t old_ns = 0;
+    if (rcl_timer_exchange_period(&odom_timer, RCL_MS_TO_NS(odom_config.period_ms), &old_ns) != RCL_RET_OK) {
+      return false; 
+    }
+  }
+  return true;
+}
+
+bool odometry_set_rate_hz(float hz) {
+  if (hz <= 0.0f) return false;
+  const unsigned int ms = (unsigned int)(1000.0f / hz);
+  return odometry_set_period_ms(ms);
+}
 
 // Odometry timer callback
 void odometry_timer_callback(rcl_timer_t *timer, int64_t last_call_time) {
@@ -150,6 +170,7 @@ bool odometry_init(rcl_node_t* node, rclc_support_t* support, rclc_executor_t* e
           &odom_timer, support, RCL_MS_TO_NS(odom_config.period_ms), odometry_timer_callback) != RCL_RET_OK) return false;
 
     if (rclc_executor_add_timer(executor, &odom_timer) != RCL_RET_OK) return false;
+    s_timer_initialized = true;
 
     odom_state.last_update_ms = 0;
     
@@ -166,6 +187,7 @@ void odometry_fini(rcl_node_t* node) {
     if (ret1 != RCL_RET_OK || ret2 != RCL_RET_OK) {
         // Handle cleanup errors if needed
     }
+    s_timer_initialized = false;
     
     // Clean up odometry message to prevent memory leaks
     static nav_msgs__msg__Odometry odom;
@@ -181,10 +203,10 @@ void odometry_reset(float x, float y, float yaw_rad) {
 }
 
 // Set odometry period
-void odometry_set_period_ms(unsigned int period_ms) {
-    odom_config.period_ms = period_ms;
-    // Note: Timer recreation would need to be handled in the main loop
-}
+// void odometry_set_period_ms(unsigned int period_ms) {
+//     odom_config.period_ms = period_ms;
+//     // Note: Timer recreation would need to be handled in the main loop
+// }
 
 // Set wheel radius
 void odometry_set_wheel_radius(float radius) {

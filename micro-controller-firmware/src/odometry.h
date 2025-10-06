@@ -35,7 +35,8 @@ extern rcl_timer_t odom_timer;
 bool odometry_init(rcl_node_t* node, rclc_support_t* support, rclc_executor_t* executor);
 void odometry_fini(rcl_node_t* node);
 void odometry_reset(float x, float y, float yaw_rad);
-void odometry_set_period_ms(unsigned int period_ms);
+bool odometry_set_period_ms(unsigned int period_ms);
+bool odometry_set_rate_hz(float hz);
 void odometry_set_wheel_radius(float radius);
 void odometry_timer_callback(rcl_timer_t *timer, int64_t last_call_time);
 
