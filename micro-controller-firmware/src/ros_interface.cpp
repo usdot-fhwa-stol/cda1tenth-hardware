@@ -1,6 +1,14 @@
 #include "ros_interface.h"
 #include "car.h"
+#include "sensor_manager.h"
 #include "debug.h"
+
+// Macro for executing code every N milliseconds (following micro-ROS example)
+#define EXECUTE_EVERY_N_MS(MS, X) do { \
+    static volatile int64_t init = -1; \
+    if (init == -1) { init = millis();} \
+    if (millis() - init > MS) { X; init = millis();} \
+} while(0)
 #include <rmw_microros/rmw_microros.h>
 #include <Arduino.h>
 
@@ -25,7 +33,7 @@ ROSInterface::ROSInterface()
     instance_ = this;
     
     // Initialize ROS2 objects to zero
-    support_ = rcl_get_zero_initialized_support();
+    memset(&support_, 0, sizeof(rclc_support_t));
     node_ = rcl_get_zero_initialized_node();
     executor_ = rclc_executor_get_zero_initialized_executor();
     allocator_ = rcl_get_default_allocator();
@@ -140,7 +148,7 @@ bool ROSInterface::createEntities() {
         return false;
     }
     
-    // Create executor
+    // Create executor with 2 subscriptions
     ret = rclc_executor_init(&executor_, &support_.context, 2, &allocator_);
     if (ret != RCL_RET_OK) {
         rcl_subscription_fini(&geometry_subscriber_, &node_);
@@ -151,7 +159,7 @@ bool ROSInterface::createEntities() {
         return false;
     }
     
-    // Add subscribers to executor
+    // Add twist subscriber to executor
     ret = rclc_executor_add_subscription(&executor_, &twist_subscriber_, &twist_msg_,
         &twistCallback, ON_NEW_DATA);
     if (ret != RCL_RET_OK) {
@@ -164,6 +172,7 @@ bool ROSInterface::createEntities() {
         return false;
     }
     
+    // Add geometry subscriber to executor
     ret = rclc_executor_add_subscription(&executor_, &geometry_subscriber_, &geometry_msg_,
         &geometryCallback, ON_NEW_DATA);
     if (ret != RCL_RET_OK) {
@@ -176,9 +185,6 @@ bool ROSInterface::createEntities() {
         return false;
     }
     
-    // Set executor timeout
-    rclc_executor_set_timeout(&executor_, RCL_MS_TO_NS(1));
-    
     return true;
 }
 
@@ -188,14 +194,34 @@ void ROSInterface::destroyEntities() {
         car.setSteeringAngle(0.0f);
     }
     
-    rclc_executor_fini(&executor_);
-    rcl_subscription_fini(&geometry_subscriber_, &node_);
-    rcl_subscription_fini(&twist_subscriber_, &node_);
-    rcl_publisher_fini(&debug_publisher_, &node_);
-    rcl_publisher_fini(&motor_data_publisher_, &node_);
+    // Set context entity destroy session timeout to 0 for faster cleanup
+    rmw_context_t * rmw_context = rcl_context_get_rmw_context(&support_.context);
+    (void) rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
+    
+    // Clean up publishers
     rcl_publisher_fini(&imu_publisher_, &node_);
+    rcl_publisher_fini(&motor_data_publisher_, &node_);
+    rcl_publisher_fini(&debug_publisher_, &node_);
+    
+    // Clean up subscribers
+    rcl_subscription_fini(&twist_subscriber_, &node_);
+    rcl_subscription_fini(&geometry_subscriber_, &node_);
+    
+    // Clean up executor
+    rclc_executor_fini(&executor_);
+    
+    // Clean up node and support
     rcl_node_fini(&node_);
     rclc_support_fini(&support_);
+    
+    // Re-initialize to clean state
+    node_ = rcl_get_zero_initialized_node();
+    executor_ = rclc_executor_get_zero_initialized_executor();
+    imu_publisher_ = rcl_get_zero_initialized_publisher();
+    motor_data_publisher_ = rcl_get_zero_initialized_publisher();
+    debug_publisher_ = rcl_get_zero_initialized_publisher();
+    twist_subscriber_ = rcl_get_zero_initialized_subscription();
+    geometry_subscriber_ = rcl_get_zero_initialized_subscription();
 }
 
 void ROSInterface::cleanup() {
@@ -207,56 +233,36 @@ bool ROSInterface::isConnected() const {
 }
 
 void ROSInterface::update() {
-    updateConnectionState();
-    
+    // Synchronize time with agent
     if (current_state_ == AGENT_CONNECTED) {
-        // Spin executor with timeout
-        uint32_t start_time = millis();
-        rclc_executor_spin_some(&executor_, RCL_MS_TO_NS(1));
-        uint32_t spin_time = millis() - start_time;
-        
-        // Watchdog: if ROS takes too long, force disconnect
-        if (spin_time > 5) {
-            executor_timeouts_++;
-            if (executor_timeouts_ > 3) {
-                current_state_ = AGENT_DISCONNECTED;
-                executor_timeouts_ = 0;
-            }
-        } else {
-            executor_timeouts_ = 0;
-        }
+        rmw_uros_sync_session(1000);
     }
+    
+    updateConnectionState();
 }
 
 void ROSInterface::updateConnectionState() {
-    uint32_t now = millis();
-    
     switch (current_state_) {
         case WAITING_AGENT:
-            if (now - last_ping_time_ >= 500) {
-                if (pingAgent()) {
-                    current_state_ = AGENT_AVAILABLE;
-                }
-                last_ping_time_ = now;
-            }
+            EXECUTE_EVERY_N_MS(500, 
+                current_state_ = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;
+            );
             break;
             
         case AGENT_AVAILABLE:
-            if (createEntities()) {
-                current_state_ = AGENT_CONNECTED;
-            } else {
-                current_state_ = WAITING_AGENT;
-                connection_failures_++;
+            current_state_ = (true == createEntities()) ? AGENT_CONNECTED : WAITING_AGENT;
+            if (current_state_ == WAITING_AGENT) {
                 destroyEntities();
             }
             break;
             
         case AGENT_CONNECTED:
-            if (now - last_ping_time_ >= 500) {
-                if (!pingAgent()) {
-                    current_state_ = AGENT_DISCONNECTED;
-                }
-                last_ping_time_ = now;
+            EXECUTE_EVERY_N_MS(200, 
+                current_state_ = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;
+            );
+            if (current_state_ == AGENT_CONNECTED) {
+                // Minimal executor spin to prevent system overload
+                rclc_executor_spin_some(&executor_, RCL_MS_TO_NS(1));  // Minimal spin time
             }
             break;
             
@@ -264,12 +270,13 @@ void ROSInterface::updateConnectionState() {
             destroyEntities();
             current_state_ = WAITING_AGENT;
             break;
+            
+        default:
+            current_state_ = WAITING_AGENT;
+            break;
     }
 }
 
-bool ROSInterface::pingAgent() {
-    return (rmw_uros_ping_agent(100, 1) == RMW_RET_OK);
-}
 
 ROSInterface::ConnectionState ROSInterface::getState() const {
     return current_state_;
@@ -293,10 +300,17 @@ void ROSInterface::publishIMUData(const SensorData& sensorData) {
     imu_msg_.orientation.z = 0.0;
     imu_msg_.orientation.w = 1.0;
     
-    // Set timestamp
-    uint32_t time_ms = millis();
-    imu_msg_.header.stamp.sec = time_ms / 1000;
-    imu_msg_.header.stamp.nanosec = (time_ms % 1000) * 1000000;
+    // Set timestamp using synced time
+    int64_t time_ms = rmw_uros_epoch_millis();
+    if (time_ms > 0) {
+        imu_msg_.header.stamp.sec = time_ms / 1000;
+        imu_msg_.header.stamp.nanosec = (time_ms % 1000) * 1000000;
+    } else {
+        // Fallback to local time if sync fails
+        uint32_t local_time_ms = millis();
+        imu_msg_.header.stamp.sec = local_time_ms / 1000;
+        imu_msg_.header.stamp.nanosec = (local_time_ms % 1000) * 1000000;
+    }
     
     // Set frame_id
     static char frame_id[] = "imu_link";
@@ -328,6 +342,9 @@ void ROSInterface::publishDebugData(const float* debugData, size_t dataSize) {
         debug_data_array_[i] = debugData[i];
     }
     
+    // Update the message size
+    debug_msg_.data.size = copySize;
+    
     rcl_publish(&debug_publisher_, &debug_msg_, NULL);
 }
 
@@ -339,6 +356,14 @@ void ROSInterface::setVehicleGeometry(float wheelbase, float trackWidth) {
 // Static callback functions
 void ROSInterface::twistCallback(const void* msgin) {
     if (!instance_ || !car_initialized) return;
+    
+    // Rate limiting to prevent message flooding
+    static uint32_t last_twist_time = 0;
+    uint32_t current_time = millis();
+    if (current_time - last_twist_time < 50) {  // Limit to 20Hz max
+        return;  // Skip this message
+    }
+    last_twist_time = current_time;
     
     const auto* twist = static_cast<const geometry_msgs__msg__Twist*>(msgin);
     
@@ -365,9 +390,9 @@ void ROSInterface::twistCallback(const void* msgin) {
     // Convert speed to RPM
     float speed_rpm = linear_x * 4.0f * 60.0f / (M_PI * 0.06f); // Scale factor
     
-    // Apply commands
-    car.setSteeringAngle(steering_angle);
-    car.setSpeed(speed_rpm, instance_->wheelbase_, instance_->trackWidth_);
+    // TEMPORARILY DISABLED - Test if car control is causing freeze
+    // car.setSteeringAngle(steering_angle);
+    // car.setSpeed(speed_rpm, instance_->wheelbase_, instance_->trackWidth_);
 }
 
 void ROSInterface::geometryCallback(const void* msgin) {
@@ -384,3 +409,5 @@ void ROSInterface::geometryCallback(const void* msgin) {
     
     instance_->setVehicleGeometry(wheelbase, track_width);
 }
+
+

@@ -1,0 +1,30 @@
+# Car Odometry Configuration Parameters
+
+car_odometry_node:
+  ros__parameters:
+    # Physical robot parameters
+    wheel_radius: 0.03      # 3cm wheel radius
+    wheelbase: 0.185        # 18.5cm wheelbase
+    track_width: 0.15       # 15cm track width
+    
+    # Publishing parameters
+    publish_rate: 50.0       # 50Hz odometry publishing
+    frame_id: "odom"         # Odometry frame
+    child_frame_id: "base_link"  # Base link frame
+    
+    # Covariance parameters (adjust based on sensor quality)
+    position_covariance:
+      xx: 0.1    # X position variance
+      yy: 0.1    # Y position variance
+      zz: 0.1    # Z position variance
+      roll: 0.1  # Roll variance
+      pitch: 0.1 # Pitch variance
+      yaw: 0.1   # Yaw variance
+      
+    velocity_covariance:
+      vx: 0.1    # Linear X velocity variance
+      vy: 0.1    # Linear Y velocity variance
+      vz: 0.1    # Linear Z velocity variance
+      wx: 0.1    # Angular X velocity variance
+      wy: 0.1    # Angular Y velocity variance
+      wz: 0.1    # Angular Z velocity variance

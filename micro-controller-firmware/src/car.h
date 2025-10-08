@@ -47,7 +47,7 @@
 #define DRIVE_STALL_THRESHOLD 0.5f
 #define DRIVE_STALL_REDUCTION 250
 #define DRIVE_MAX_STALL_COUNT 5
-#define MAX_STEP_ACCEL 200.0f
+#define MAX_STEP_ACCEL 1000.0f  // Increased from 200.0f for faster acceleration
 #define MIN_SPEED_THRESHOLD 0.1f  // Minimum speed to consider as "stopped"
 
 // Steering hold disable parameters
@@ -93,13 +93,15 @@ public:
   void setSpeed(float rpm);
   void updateControlLoop();
   float getCurrentRPM();
-  float getCurrentRPMAtomic();  // Non-blocking atomic read
+  float getCurrentRPMAtomic() const;  // Non-blocking atomic read
 };
 
 class Car {
 public:
   float speed = 0.0f;
   float steeringAngle = 0.0f;
+  float wheelbase = 0.185f;  // Default wheelbase
+  float trackWidth = 0.15f;  // Default track width
   DriveMotor rightMotor;
   DriveMotor leftMotor;
   SteeringMotor steeringMotor;
@@ -111,8 +113,8 @@ public:
   void setSpeed(float rpm, float wheelbase, float trackWidth);
   float getRightMotorRPM();
   float getLeftMotorRPM();
-  float getRightMotorRPMAtomic();  // Non-blocking atomic read
-  float getLeftMotorRPMAtomic();   // Non-blocking atomic read
+  float getRightMotorRPMAtomic() const;  // Non-blocking atomic read
+  float getLeftMotorRPMAtomic() const;   // Non-blocking atomic read
   bool isMovingFastEnough();       // Check if car is moving fast enough for steering hold
 
 private:

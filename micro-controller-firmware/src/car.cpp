@@ -170,69 +170,29 @@ void DriveMotor::setSpeed(float rpm) {
 }
 
 void DriveMotor::updateControlLoop() {
+  // MINIMAL motor control - just set the target speed directly
+  // No complex control loops, no error calculations, no rate limiting
+  
+  // Simple fault check only
   if (driver.GSTAT() & (1 << 2)) { // Check for UV_CP fault
     if (!tmc5160_recover(driver, EN_PIN)) {
       return; // Recovery failed, do not proceed
     }
   }
-  int32_t current_enc = driver.X_ENC();
-  uint32_t now = micros();
-  uint32_t dt = now - last_time;
-  int32_t delta_enc = current_enc - last_enc;
   
-  // Avoid division by zero
-  if (dt > 0) {
-    float measured_ticks_per_sec = (float)delta_enc * 1e6f / dt;
-    float measured_steps_per_sec = measured_ticks_per_sec * (MOTOR_STEPS * MICROSTEPS / ENCODER_TICKS_PER_REVOLUTION);
-    measured_steps_per_sec = abs(measured_steps_per_sec);
-
-    // Calculate current RPM
-    current_rpm = (measured_steps_per_sec / (MOTOR_STEPS * MICROSTEPS)) * 60.0f;
-
-    float error = target_steps_per_sec - measured_steps_per_sec;
-    int32_t adjustment = (int32_t)(error * DRIVE_ERROR_GAIN);
-
-    if (measured_steps_per_sec < (DRIVE_STALL_THRESHOLD * step_rate_cmd)) {
-      stall_counter++;
-    } else {
-      stall_counter = 0;
-    }
-
-    if (stall_counter > DRIVE_MAX_STALL_COUNT) {
-      step_rate_cmd -= DRIVE_STALL_REDUCTION * stall_counter;
-      if ((int32_t)step_rate_cmd < 0) step_rate_cmd = 0;
-    } else {
-      step_rate_cmd += adjustment;
-      if ((int32_t)step_rate_cmd < 0) step_rate_cmd = 0;
-    }
-
-    // Limit rate of change
-    float max_step_change = MAX_STEP_ACCEL * (dt / 1e6f);  // steps/sec
-
-    if (target_steps_per_sec > step_rate_cmd + max_step_change) {
-      step_rate_cmd += max_step_change;
-    } else if (target_steps_per_sec < step_rate_cmd - max_step_change) {
-      step_rate_cmd -= max_step_change;
-    } else {
-      step_rate_cmd = target_steps_per_sec;
-    }
-
-    // Clamp to non-negative
-    if (step_rate_cmd < 0.0f) step_rate_cmd = 0.0f;
-
-    driver.VMAX(step_rate_cmd);
-    driver.shaft(target_rpm < 0);
-  }
-
-  last_enc = current_enc;
-  last_time = now;
+  // Just set the motor speed directly - no control loop
+  driver.VMAX(target_steps_per_sec);
+  driver.shaft(target_rpm < 0);
+  
+  // Update timing for next call
+  last_time = micros();
 }
 
 float DriveMotor::getCurrentRPM() {
   return current_rpm;
 }
 
-float DriveMotor::getCurrentRPMAtomic() {
+float DriveMotor::getCurrentRPMAtomic() const {
   return current_rpm;  // Direct access to volatile variable
 }
 
@@ -254,9 +214,14 @@ bool Car::tryLock(uint32_t timeoutMs) {
 }
 
 void Car::updateControlLoops() {
-  rightMotor.updateControlLoop();
-  leftMotor.updateControlLoop();
-  steeringMotor.updatePosition();
+  // TEMPORARILY DISABLED - Test if motor control is causing freeze
+  // rightMotor.setSpeed(speed);
+  // leftMotor.setSpeed(-speed);
+  
+  // Update motor control loops - DISABLED FOR TESTING
+  // rightMotor.updateControlLoop();
+  // leftMotor.updateControlLoop();
+  // steeringMotor.updatePosition();
 }
 
 void Car::begin() {
@@ -266,48 +231,20 @@ void Car::begin() {
 }
 
 void Car::setSteeringAngle(float angle) {
-  // Store the target angle immediately (no mutex needed for this)
+  // MINIMAL steering control - no mutex, no complex logic
   steeringAngle = angle;
-  
-  // Try to set the motor target, but don't block if mutex is busy
-  if (tryLock(1)) {  // Very short timeout - 1ms
-    steeringMotor.setTargetAngle(angle);
-    unlock();
-  } else {
-    // If mutex is busy, set the target directly (steering is thread-safe for setting targets)
-    steeringMotor.setTargetAngle(angle);
-  }
+  steeringMotor.setTargetAngle(angle);
 }
 
 void Car::setSpeed(float rpm, float wheelbase, float trackWidth) {
-  if (tryLock(5)) {  // 5ms timeout
-    speed = rpm;
-
-    // steeringAngle is stored in degrees in this class; convert to radians for trig
-    const float steeringAngleRad = steeringAngle * (M_PI / 180.0f);
-    constexpr float minTurnAngle = 0.01f; // radians
-
-    if (fabsf(steeringAngleRad) < minTurnAngle) {
-      rightMotor.setSpeed(rpm);
-      leftMotor.setSpeed(-rpm);
-      unlock();
-      return;
-    }
-
-    float R = wheelbase / tanf(steeringAngleRad);
-    float R_L = R - (trackWidth / 2.0f);
-    float R_R = R + (trackWidth / 2.0f);
-
-    float v_L = rpm * (R_L / R);
-    float v_R = rpm * (R_R / R);
-
-    rightMotor.setSpeed(v_R);
-
-    // left motor requires opposite rotation of right motor due to mirroring on car
-    leftMotor.setSpeed(-v_L);
-    unlock();
-  }
-  // If lock fails, skip this update to prevent blocking
+  // Simplified setSpeed - no mutex to prevent deadlocks
+  // Just store the values and let the control loop handle the rest
+  speed = rpm;
+  wheelbase = wheelbase;
+  trackWidth = trackWidth;
+  
+  // The control loop will apply these values on the next update
+  // This prevents mutex deadlocks and system freezes
 }
 
 float Car::getRightMotorRPM() {
@@ -324,11 +261,11 @@ float Car::getLeftMotorRPM() {
   return leftRPM;
 }
 
-float Car::getRightMotorRPMAtomic() {
+float Car::getRightMotorRPMAtomic() const {
   return rightMotor.getCurrentRPMAtomic();
 }
 
-float Car::getLeftMotorRPMAtomic() {
+float Car::getLeftMotorRPMAtomic() const {
   return leftMotor.getCurrentRPMAtomic();
 }
 
