@@ -8,11 +8,12 @@
                 "-DRMW_UXRCE_MAX_SERVICES=6",
                 "-DRMW_UXRCE_MAX_CLIENTS=2",
                 "-DRMW_UXRCE_MAX_HISTORY=2",
+                "-DRMW_UXRCE_TRANSPORT=custom"
             ]
         },
         "microxrcedds_client":{
                 "cmake-args": [
-                    "-DUCLIENT_CUSTOM_TRANSPORT_MTU=1024",
+                    "-DUCLIENT_SERIAL_TRANSPORT_MTU=1024",
                 ]
         }
     }

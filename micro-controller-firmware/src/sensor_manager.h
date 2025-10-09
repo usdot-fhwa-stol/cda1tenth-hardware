@@ -3,9 +3,8 @@
 
 #include <Arduino.h>
 #include <SparkFunLSM6DSO.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/semphr.h"
+
+#define CS_IMU 14
 
 struct SensorData {
     float gyro_x = 0.0f;
@@ -19,7 +18,6 @@ struct SensorData {
     float left_rpm = 0.0f;
     uint32_t last_update_ms = 0;
     bool data_valid = false;
-    SemaphoreHandle_t mutex;
 };
 
 class SensorManager {
@@ -42,12 +40,9 @@ public:
     bool isIMUReady() const;
     float getTemperature() const;
     
-    // Motor data methods
-    void setMotorRPM(float right_rpm, float left_rpm);
-    
-    // Task management
-    void startSensorTask();
-    void stopSensorTask();
+    // Single-threaded operation
+    void startSensorTask() {} // No-op for compatibility
+    void stopSensorTask() {}  // No-op for compatibility
     
 private:
     // IMU
@@ -57,10 +52,6 @@ private:
     
     // Sensor data
     SensorData sensor_data_;
-    
-    // FreeRTOS task
-    TaskHandle_t sensor_task_handle_;
-    static void sensorTask(void* parameter);
     
     // Internal methods
     void readIMUData();

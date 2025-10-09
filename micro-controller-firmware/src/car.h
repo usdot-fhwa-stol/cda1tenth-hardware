@@ -4,9 +4,6 @@
 #include <Arduino.h>
 #include <TMCStepper.h>
 #include <SPI.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/semphr.h"
 #include <limits.h>
 
 // SPI pin definitions
@@ -28,14 +25,7 @@
 #define STEERING_SENSOR_MAX_VALUE 4095.0f
 #define DEGREES_PER_REVOLUTION 360.0f
 
-// Encoder parameters
-#define ENCODER_TICKS_PER_REVOLUTION 4000.0f
-
 // Steering control parameters
-#define STEERING_DEADBAND 0.5f
-#define STEERING_KP 400.0f
-#define STEERING_MAX_SPEED 12000.0f
-#define STEERING_ERROR_THRESHOLD 5.0f
 #define STEERING_CORRECTION_INTERVAL 10000  // 10 ms for more responsive steering
 #define STEERING_GEAR_RATIO (55.0f/12.0f) // ≈ 4.5833
 #define STEERING_MAX_ALLOWED_ERROR 5.0f
@@ -43,15 +33,6 @@
 #define SMALL_MOVEMENT_THRESHOLD 0.5f // degrees
 
 // Drive motor control parameters
-#define DRIVE_ERROR_GAIN 0.1f
-#define DRIVE_STALL_THRESHOLD 0.5f
-#define DRIVE_STALL_REDUCTION 250
-#define DRIVE_MAX_STALL_COUNT 5
-#define MAX_STEP_ACCEL 1000.0f  // Increased from 200.0f for faster acceleration
-#define MIN_SPEED_THRESHOLD 0.1f  // Minimum speed to consider as "stopped"
-
-// Steering hold disable parameters
-#define STEERING_HOLD_DISABLE_SPEED_THRESHOLD 1.0f  // RPM threshold to disable steering hold
 
 class SteeringMotor {
 public:
@@ -59,41 +40,53 @@ public:
   int cs_pin;
   float angleOffset = 187.5f;
   float targetAngle = 0.0f;
-  int32_t targetSpeed = 0;
-  int32_t lastAppliedSpeed = INT32_MIN;
   uint32_t lastCorrectionMicros = 0;
   float lastExternalAngle = 0.0f;
   int stallCounter = 0;
   
   SteeringMotor(int cs);
   void begin();
-  void setSpeed(int32_t speed);
   void setTargetAngle(float angle);
   float getSteeringAngle();
   void updatePosition();
-  void applySpeed();
   float normalizeAngle(float angle);
-  void setPositionHoldEnabled(bool enabled);
 };
 
 class DriveMotor {
 public:
   TMC5160Stepper driver;
   int cs_pin;
-  uint32_t step_rate_cmd = 0;
   uint32_t target_steps_per_sec = 0;
-  int32_t last_enc = 0;
   uint32_t last_time = 0;
-  int stall_counter = 0;
-  volatile float current_rpm = 0.0f;  // Made volatile for atomic access
   float target_rpm = 0.0f;
+  
+  // Control loop variables
+  int32_t last_enc = 0;
+  float step_rate_cmd = 0.0f;
+  float current_rpm = 0.0f;
+  
+  // Non-blocking control state
+  bool driver_ready = true;
+  
+  // Control constants
+  static const int ENCODER_TICKS_PER_REVOLUTION = 4096;
 
   DriveMotor(int cs);
   void begin();
   void setSpeed(float rpm);
   void updateControlLoop();
-  float getCurrentRPM();
-  float getCurrentRPMAtomic() const;  // Non-blocking atomic read
+  float getCurrentRPM() const;
+  
+private:
+  bool safeSPIOperation();
+};
+
+// Motor command structure for non-blocking operation
+struct MotorCommand {
+  float speed_rpm = 0.0f;
+  float steering_angle = 0.0f;
+  uint32_t timestamp = 0;
+  bool valid = false;
 };
 
 class Car {
@@ -111,17 +104,34 @@ public:
   void begin();
   void setSteeringAngle(float angle);
   void setSpeed(float rpm, float wheelbase, float trackWidth);
-  float getRightMotorRPM();
-  float getLeftMotorRPM();
-  float getRightMotorRPMAtomic() const;  // Non-blocking atomic read
-  float getLeftMotorRPMAtomic() const;   // Non-blocking atomic read
-  bool isMovingFastEnough();       // Check if car is moving fast enough for steering hold
+  float getRightMotorRPM() const;
+  float getLeftMotorRPM() const;
+  
+  // Non-blocking command queue
+  void queueMotorCommand(float speed_rpm, float steering_angle);
+  void processCommandQueue();
+  
+  // Timeout and error handling
+  bool isDriverHealthy();
+  void emergencyStop();
 
 private:
-  SemaphoreHandle_t carMutex;
-  void lock();
-  void unlock();
-  bool tryLock(uint32_t timeoutMs = 10);  // Non-blocking lock with timeout
+  // Command queue for non-blocking operation
+  static const int COMMAND_QUEUE_SIZE = 5;
+  MotorCommand command_queue_[COMMAND_QUEUE_SIZE];
+  int queue_head_ = 0;
+  int queue_tail_ = 0;
+  int queue_count_ = 0;
+  
+  // Timeout tracking
+  uint32_t last_motor_update_ = 0;
+  uint32_t last_steering_update_ = 0;
+  bool driver_healthy_ = true;
+  
+  // Non-blocking helper functions
+  bool addToQueue(const MotorCommand& cmd);
+  bool getFromQueue(MotorCommand& cmd);
+  void clearQueue();
 };
 
 #endif // CAR_H   

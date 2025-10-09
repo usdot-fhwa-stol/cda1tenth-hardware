@@ -3,126 +3,107 @@
 
 // External references
 extern Car car;
-extern bool car_initialized;
 
-SensorManager::SensorManager() 
-    : imu_initialized_(false)
-    , cs_pin_(14)
-    , sensor_task_handle_(NULL)
+SensorManager::SensorManager()
+    : imu_initialized_(false), cs_pin_(CS_IMU)
 {
-    // Initialize sensor data
-    sensor_data_.mutex = xSemaphoreCreateMutex();
+    // Initialize sensor data - no mutex needed in single-threaded design
 }
 
-SensorManager::~SensorManager() {
+SensorManager::~SensorManager()
+{
     cleanup();
 }
 
-bool SensorManager::initialize() {
+bool SensorManager::initialize()
+{
     // Initialize IMU
     imu_.beginSPI(cs_pin_);
-    if (imu_.initialize(BASIC_SETTINGS)) {
+    if (imu_.initialize(BASIC_SETTINGS))
+    {
         imu_initialized_ = true;
-    } else {
+    }
+    else
+    {
         imu_initialized_ = false;
         return false;
     }
-    
+
     // Start sensor task
     startSensorTask();
-    
+
     return true;
 }
 
-void SensorManager::cleanup() {
+void SensorManager::cleanup()
+{
     stopSensorTask();
-    
-    if (sensor_data_.mutex) {
-        vSemaphoreDelete(sensor_data_.mutex);
-        sensor_data_.mutex = NULL;
-    }
+    // No mutex cleanup needed in single-threaded design
 }
 
-SensorData SensorManager::getLatestData() {
-    SensorData data;
-    
-    if (xSemaphoreTake(sensor_data_.mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        data = sensor_data_;
-        xSemaphoreGive(sensor_data_.mutex);
-    }
-    
-    return data;
+SensorData SensorManager::getLatestData()
+{
+    // Direct access - no mutex needed in single-threaded design
+    return sensor_data_;
 }
 
-bool SensorManager::isDataValid() const {
+bool SensorManager::isDataValid() const
+{
     return sensor_data_.data_valid;
 }
 
-void SensorManager::update() {
+void SensorManager::update()
+{
     // Simplified update - no separate task, everything in main loop
     static uint32_t last_imu_read = 0;
     uint32_t now = millis();
-    
-    // Read IMU at 10Hz to avoid overwhelming the system
-    if (imu_initialized_ && (now - last_imu_read >= 100)) {
+
+    // Read IMU at 50Hz to match control loop frequency
+    if (imu_initialized_ && (now - last_imu_read >= 20))
+    {
         readIMUData();
         last_imu_read = now;
     }
-    
-    if (car_initialized) {
-        sensor_data_.right_rpm = car.getRightMotorRPMAtomic();
-        sensor_data_.left_rpm = car.getLeftMotorRPMAtomic();
-    }
-    
+
+    // Always try to get motor data (car is always initialized in new approach)
+    sensor_data_.right_rpm = car.getRightMotorRPM();
+    sensor_data_.left_rpm = car.getLeftMotorRPM();
+
     updateSensorData();
 }
 
-bool SensorManager::isIMUReady() const {
+bool SensorManager::isIMUReady() const
+{
     return imu_initialized_;
 }
 
-float SensorManager::getTemperature() const {
+float SensorManager::getTemperature() const
+{
     return sensor_data_.temperature;
 }
 
-void SensorManager::setMotorRPM(float right_rpm, float left_rpm) {
-    // Simplified - no mutex to avoid conflicts with micro-ROS
-    sensor_data_.right_rpm = right_rpm;
-    sensor_data_.left_rpm = left_rpm;
-}
+void SensorManager::readIMUData()
+{
+    if (!imu_initialized_)
+        return;
 
-void SensorManager::startSensorTask() {
-    // Disable separate sensor task to avoid thread conflicts with micro-ROS
-    // All sensor reading will be done in main loop
-    sensor_task_handle_ = NULL;
-}
-
-void SensorManager::stopSensorTask() {
-    if (sensor_task_handle_ != NULL) {
-        vTaskDelete(sensor_task_handle_);
-        sensor_task_handle_ = NULL;
-    }
-}
-
-// Sensor task removed to avoid thread conflicts with micro-ROS
-// All sensor operations now happen in main loop
-
-void SensorManager::readIMUData() {
-    if (!imu_initialized_) return;
-    
-    // Read IMU data
+    // Read IMU data with error checking
     float gyro_x = imu_.readFloatGyroX() * (M_PI / 180.0f);
     float gyro_y = imu_.readFloatGyroY() * (M_PI / 180.0f);
     float gyro_z = imu_.readFloatGyroZ() * (M_PI / 180.0f);
-    
+
     float accel_x = imu_.readFloatAccelX();
     float accel_y = imu_.readFloatAccelY();
     float accel_z = imu_.readFloatAccelZ();
-    
+
     float temperature = imu_.readTempF();
-    
-    // Update sensor data with mutex protection
-    if (xSemaphoreTake(sensor_data_.mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+
+    // Check for valid data (not NaN or infinity)
+    if (!isnan(gyro_x) && !isnan(gyro_y) && !isnan(gyro_z) &&
+        !isnan(accel_x) && !isnan(accel_y) && !isnan(accel_z) &&
+        !isnan(temperature))
+    {
+        // Update sensor data - no mutex needed in single-threaded design
         sensor_data_.gyro_x = gyro_x;
         sensor_data_.gyro_y = gyro_y;
         sensor_data_.gyro_z = gyro_z;
@@ -132,14 +113,17 @@ void SensorManager::readIMUData() {
         sensor_data_.temperature = temperature;
         sensor_data_.last_update_ms = millis();
         sensor_data_.data_valid = true;
-        xSemaphoreGive(sensor_data_.mutex);
+    }
+    else
+    {
+        // Mark data as invalid if we got bad readings
+        sensor_data_.data_valid = false;
     }
 }
 
-void SensorManager::updateSensorData() {
-    if (xSemaphoreTake(sensor_data_.mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        sensor_data_.last_update_ms = millis();
-        sensor_data_.data_valid = true;
-        xSemaphoreGive(sensor_data_.mutex);
-    }
+void SensorManager::updateSensorData()
+{
+    // Direct update - no mutex needed in single-threaded design
+    sensor_data_.last_update_ms = millis();
+    sensor_data_.data_valid = true;
 }

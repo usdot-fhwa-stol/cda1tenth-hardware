@@ -43,6 +43,24 @@ public:
     void publishMotorData(const Car& car);
     void publishDebugData(const float* debugData, size_t dataSize);
     
+    // Debug data access
+    float* getDebugDataArray() { return debug_data_array_; }
+    
+    // Message queue system
+    struct TwistMessage {
+        float linear_x = 0.0f;
+        float angular_z = 0.0f;
+        uint32_t timestamp = 0;
+        bool valid = false;
+    };
+    
+    bool getNextTwistMessage(TwistMessage& msg);
+    void clearMessageQueue();
+    int getQueueSize() const { return queue_count_; }
+    
+    // Polling-based message reception (bypass executor)
+    void pollForMessages();
+    
     // Callback functions (static for C compatibility)
     static void twistCallback(const void* msgin);
     static void geometryCallback(const void* msgin);
@@ -58,6 +76,9 @@ private:
     rcl_node_t node_;
     rclc_executor_t executor_;
     rcl_allocator_t allocator_;
+    
+    // Wait set for manual polling
+    rcl_wait_set_t wait_set_;
     
     // Publishers
     rcl_publisher_t imu_publisher_;
@@ -79,11 +100,15 @@ private:
     static float motor_data_array_[4]; // [right_rpm, left_rpm, right_current, left_current]
     static float debug_data_array_[20]; // Expanded debug data
     
+    // Message queue for decoupled processing
+    static const int MESSAGE_QUEUE_SIZE = 10;
+    TwistMessage message_queue_[MESSAGE_QUEUE_SIZE];
+    int queue_head_ = 0;
+    int queue_tail_ = 0;
+    int queue_count_ = 0;
+    
     // State management
     ConnectionState current_state_;
-    uint32_t last_ping_time_;
-    uint32_t connection_failures_;
-    uint32_t executor_timeouts_;
     
     // Vehicle geometry
     float wheelbase_;
@@ -93,7 +118,6 @@ private:
     bool createEntities();
     void destroyEntities();
     void updateConnectionState();
-    bool pingAgent();
     
     // Static callbacks need access to instance
     static ROSInterface* instance_;
