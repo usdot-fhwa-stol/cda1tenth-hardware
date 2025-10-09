@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "USB.h"
 #include "USBCDC.h"
+#include <WiFi.h>
 #include <micro_ros_platformio.h>
 #include <stdio.h>
 
@@ -13,6 +14,9 @@
 #include <sensor_msgs/msg/imu.h>
 #include <geometry_msgs/msg/twist.h>
 #include <std_msgs/msg/float32_multi_array.h>
+#include <geometry_msgs/msg/vector3.h>
+#include <std_msgs/msg/header.h>
+#include <robot_state_msgs/msg/robot_state.h>
 
 #include "car.h"
 #include "sensor_manager.h"
@@ -55,17 +59,19 @@
 #define LED_PIN 37
 
 // ROS Publishers and Subscribers
-rcl_publisher_t imu_publisher;
-rcl_publisher_t motor_data_publisher;
+rcl_publisher_t robot_state_publisher; // Combined IMU and motor data
 rcl_publisher_t debug_publisher;
-rcl_publisher_t odom_publisher;
+// rcl_publisher_t odom_publisher;  // Commented out for high-rate testing
+// rcl_publisher_t latency_echo_publisher;  // Removed latency test functionality
 rcl_subscription_t twist_subscriber;
+// rcl_subscription_t latency_test_subscriber;  // Removed latency test functionality
 
 // ROS Messages
-sensor_msgs__msg__Imu imu_msg;
-std_msgs__msg__Float32MultiArray motor_data_msg;
+robot_state_msgs__msg__RobotState robot_state_msg; // Combined IMU and motor data
 std_msgs__msg__Float32MultiArray debug_msg;
 geometry_msgs__msg__Twist twist_msg;
+// std_msgs__msg__UInt64 latency_test_msg;  // Removed latency test functionality
+// std_msgs__msg__UInt64 latency_echo_msg;  // Removed latency test functionality
 
 // ROS Infrastructure
 rclc_executor_t executor;
@@ -74,7 +80,12 @@ rcl_allocator_t allocator;
 rcl_node_t node;
 rcl_timer_t control_timer;
 rcl_timer_t debug_timer;
-rcl_timer_t odom_timer;
+rcl_timer_t kinematics_timer;
+// rcl_timer_t odom_timer;  // Commented out for high-rate testing
+
+// WiFi credentials - UPDATE THESE FOR YOUR NETWORK
+char ssid[] = "EnglishHome2.4";
+char password[] = "970-402-1912";
 
 // Global objects
 Car car(CS_RIGHT, CS_LEFT, CS_STEER);
@@ -105,19 +116,77 @@ void syncTime();
 struct timespec getTime();
 void controlCallback(rcl_timer_t *timer, int64_t last_call_time);
 void debugCallback(rcl_timer_t *timer, int64_t last_call_time);
-void odomCallback(rcl_timer_t *timer, int64_t last_call_time);
+void kinematicsCallback(rcl_timer_t *timer, int64_t last_call_time);
+// void odomCallback(rcl_timer_t *timer, int64_t last_call_time);  // Commented out for high-rate testing
 void twistCallback(const void *msgin);
+// void latencyTestCallback(const void *msgin);  // Removed latency test functionality
 
 // Data arrays for multi-array messages
-float motor_data_array[4];
 float debug_data_array[20];
 
 void setup()
 {
   pinMode(LED_PIN, OUTPUT);
+
+  // Initialize USB
   USB.begin();
-  USBSerial.begin(2500000);
+  USBSerial.begin(115200);
   delay(1000);
+
+  // Print MAC address
+  USBSerial.print("ESP32-S3 MAC Address: ");
+  USBSerial.println(WiFi.macAddress());
+
+  // Initialize WiFi
+  USBSerial.print("Connecting to WiFi: ");
+  USBSerial.println(ssid);
+
+  // Set WiFi mode to station
+  WiFi.mode(WIFI_STA);
+
+  // Configure static IP for subnet 172.250.250.0/24
+  IPAddress local_IP(172, 250, 250, 83);
+  IPAddress gateway(172, 250, 250, 1);
+  IPAddress subnet(255, 255, 255, 0);
+  WiFi.config(local_IP, gateway, subnet);
+
+  WiFi.begin(ssid, password);
+
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20)
+  {
+    delay(500);
+    flashLED(1); // Flash LED while connecting
+    USBSerial.print(".");
+    attempts++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    // WiFi connected - solid LED for 2 seconds
+    digitalWrite(LED_PIN, HIGH);
+    delay(2000);
+    digitalWrite(LED_PIN, LOW);
+
+    // Print WiFi connection info
+    USBSerial.println();
+    USBSerial.print("WiFi connected! IP address: ");
+    USBSerial.println(WiFi.localIP());
+    USBSerial.print("Signal strength (RSSI): ");
+    USBSerial.print(WiFi.RSSI());
+    USBSerial.println(" dBm");
+  }
+  else
+  {
+    USBSerial.println();
+    USBSerial.println("WiFi connection failed!");
+    // Flash LED rapidly to indicate failure
+    for (int i = 0; i < 10; i++)
+    {
+      flashLED(1);
+      delay(200);
+    }
+  }
 
   // Initialize SPI for motor drivers
   SPI.begin();
@@ -136,24 +205,25 @@ void setup()
   // Initialize odometry with robot parameters
   odometry.initialize(0.3f, 0.2f, 0.05f); // wheelbase, track_width, wheel_radius
 
-  // Initialize micro ROS transport
-  set_microros_serial_transports(USBSerial);
+  // Initialize micro ROS transport with WiFi
+  IPAddress agent_ip(172, 250, 250, 85);
+  set_microros_wifi_transports(ssid, password, agent_ip, 8888);
   delay(2000);
 
-  // Initialize message data arrays
-  motor_data_msg.data.data = motor_data_array;
-  motor_data_msg.data.capacity = 4;
-  motor_data_msg.data.size = 4;
+  // Initialize ROS messages first
+  robot_state_msgs__msg__RobotState__init(&robot_state_msg);
+  std_msgs__msg__Float32MultiArray__init(&debug_msg);
+  geometry_msgs__msg__Twist__init(&twist_msg);
 
   debug_msg.data.data = debug_data_array;
   debug_msg.data.capacity = 20;
   debug_msg.data.size = 20;
 
-  // Initialize ROS messages
-  sensor_msgs__msg__Imu__init(&imu_msg);
-  std_msgs__msg__Float32MultiArray__init(&motor_data_msg);
-  std_msgs__msg__Float32MultiArray__init(&debug_msg);
-  geometry_msgs__msg__Twist__init(&twist_msg);
+  // Set layout for debug message
+  debug_msg.layout.dim.data = NULL;
+  debug_msg.layout.dim.size = 0;
+  debug_msg.layout.dim.capacity = 0;
+  debug_msg.layout.data_offset = 0;
 }
 
 void loop()
@@ -197,7 +267,8 @@ void controlCallback(rcl_timer_t *timer, int64_t last_call_time)
   if (timer != NULL)
   {
     moveBase();
-    publishData();
+    // Update sensor data but don't publish here
+    sensor_manager.update();
   }
 }
 
@@ -206,7 +277,7 @@ void debugCallback(rcl_timer_t *timer, int64_t last_call_time)
   RCLC_UNUSED(last_call_time);
   if (timer != NULL)
   {
-    // Get latest sensor data (don't update here to avoid conflicts with main loop)
+    // Get latest sensor data for debug info
     SensorData sensor_data = sensor_manager.getLatestData();
 
     // Fill debug data array with comprehensive system data
@@ -236,8 +307,18 @@ void debugCallback(rcl_timer_t *timer, int64_t last_call_time)
     debug_msg.data.size = 20;
     debug_msg.data.capacity = 20;
 
-    // Publish debug data at high frequency
+    // Publish debug data only
     RCSOFTCHECK(rcl_publish(&debug_publisher, &debug_msg, NULL));
+  }
+}
+
+void kinematicsCallback(rcl_timer_t *timer, int64_t last_call_time)
+{
+  RCLC_UNUSED(last_call_time);
+  if (timer != NULL)
+  {
+    // Publish IMU and motor data together at 20Hz
+    publishData();
   }
 }
 
@@ -262,6 +343,10 @@ void twistCallback(const void *msgin)
   prev_cmd_time = millis();
 }
 
+// Removed latencyTestCallback function for high-rate testing
+
+// Commented out odomCallback for high-rate testing
+/*
 void odomCallback(rcl_timer_t *timer, int64_t last_call_time)
 {
   RCLC_UNUSED(last_call_time);
@@ -302,6 +387,7 @@ void odomCallback(rcl_timer_t *timer, int64_t last_call_time)
     RCSOFTCHECK(rcl_publish(&odom_publisher, odom_msg, NULL));
   }
 }
+*/
 
 bool createEntities()
 {
@@ -313,19 +399,12 @@ bool createEntities()
   // Create node
   RCCHECK(rclc_node_init_default(&node, "car_controller", "", &support));
 
-  // Create IMU publisher
+  // Create combined robot state publisher (IMU + motor data)
   RCCHECK(rclc_publisher_init_best_effort(
-      &imu_publisher,
+      &robot_state_publisher,
       &node,
-      ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
-      "imu/data"));
-
-  // Create motor data publisher
-  RCCHECK(rclc_publisher_init_best_effort(
-      &motor_data_publisher,
-      &node,
-      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-      "motor_data"));
+      ROSIDL_GET_MSG_TYPE_SUPPORT(robot_state_msgs, msg, RobotState),
+      "robot_state"));
 
   // Create debug publisher
   RCCHECK(rclc_publisher_init_best_effort(
@@ -334,12 +413,16 @@ bool createEntities()
       ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
       "debug_data"));
 
-  // Create odometry publisher with best effort QoS
+  // Commented out odometry publisher for high-rate testing
+  /*
   RCCHECK(rclc_publisher_init_best_effort(
       &odom_publisher,
       &node,
       ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
       "odom"));
+  */
+
+  // Removed latency echo publisher for high-rate testing
 
   // Create twist command subscriber with best effort QoS
   RCCHECK(rclc_subscription_init_best_effort(
@@ -347,6 +430,8 @@ bool createEntities()
       &node,
       ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
       "cmd_vel_filtered"));
+
+  // Removed latency test subscriber for high-rate testing
 
   const unsigned int control_timeout = 20;
   RCCHECK(rclc_timer_init_default(
@@ -362,17 +447,26 @@ bool createEntities()
       RCL_MS_TO_NS(debug_timeout),
       debugCallback));
 
-  // Odometry timer disabled for now
-  // const unsigned int odom_timeout = 50;
-  // RCCHECK(rclc_timer_init_default(
-  //     &odom_timer,
-  //     &support,
-  //     RCL_MS_TO_NS(odom_timeout),
-  //     odomCallback));
+  const unsigned int kinematics_timeout = 50; // 20Hz
+  RCCHECK(rclc_timer_init_default(
+      &kinematics_timer,
+      &support,
+      RCL_MS_TO_NS(kinematics_timeout),
+      kinematicsCallback));
 
-  // Create executor
+  // Commented out odometry timer for high-rate testing
+  /*
+  const unsigned int odom_timeout = 20;
+  RCCHECK(rclc_timer_init_default(
+      &odom_timer,
+      &support,
+      RCL_MS_TO_NS(odom_timeout),
+      odomCallback));
+  */
+
+  // Create executor (increased size for kinematics timer)
   executor = rclc_executor_get_zero_initialized_executor();
-  RCCHECK(rclc_executor_init(&executor, &support.context, 3, &allocator));
+  RCCHECK(rclc_executor_init(&executor, &support.context, 4, &allocator));
 
   // Add subscription and timers to executor
   RCCHECK(rclc_executor_add_subscription(
@@ -383,8 +477,8 @@ bool createEntities()
       ON_NEW_DATA));
   RCCHECK(rclc_executor_add_timer(&executor, &control_timer));
   RCCHECK(rclc_executor_add_timer(&executor, &debug_timer));
-  // Odometry timer disabled for now
-  // RCCHECK(rclc_executor_add_timer(&executor, &odom_timer));
+  RCCHECK(rclc_executor_add_timer(&executor, &kinematics_timer));
+  // Removed latency test subscriber and odometry timer for high-rate testing
 
   // Synchronize time with the agent
   syncTime();
@@ -397,16 +491,17 @@ bool destroyEntities()
   rmw_context_t *rmw_context = rcl_context_get_rmw_context(&support.context);
   (void)rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
 
-  rcl_publisher_fini(&imu_publisher, &node);
-  rcl_publisher_fini(&motor_data_publisher, &node);
+  rcl_publisher_fini(&robot_state_publisher, &node);
   rcl_publisher_fini(&debug_publisher, &node);
-  rcl_publisher_fini(&odom_publisher, &node);
+  // rcl_publisher_fini(&odom_publisher, &node);  // Commented out for high-rate testing
+  // rcl_publisher_fini(&latency_echo_publisher, &node);  // Removed latency test functionality
   rcl_subscription_fini(&twist_subscriber, &node);
+  // rcl_subscription_fini(&latency_test_subscriber, &node);  // Removed latency test functionality
   rcl_node_fini(&node);
   rcl_timer_fini(&control_timer);
   rcl_timer_fini(&debug_timer);
-  // Odometry timer disabled for now
-  // rcl_timer_fini(&odom_timer);
+  rcl_timer_fini(&kinematics_timer);
+  // rcl_timer_fini(&odom_timer);  // Commented out for high-rate testing
   rclc_executor_fini(&executor);
   rclc_support_fini(&support);
 
@@ -471,41 +566,36 @@ void moveBase()
 
 void publishData()
 {
-  // Update sensors
-  sensor_manager.update();
-
-  // Get sensor data
+  // Get latest sensor data (already updated in control loop)
   SensorData sensor_data = sensor_manager.getLatestData();
 
-  // Fill IMU message
-  imu_msg.linear_acceleration.x = sensor_data.accel_x;
-  imu_msg.linear_acceleration.y = sensor_data.accel_y;
-  imu_msg.linear_acceleration.z = sensor_data.accel_z;
-  imu_msg.angular_velocity.x = sensor_data.gyro_x;
-  imu_msg.angular_velocity.y = sensor_data.gyro_y;
-  imu_msg.angular_velocity.z = sensor_data.gyro_z;
+  // IMU Data
+  robot_state_msg.accel_x = sensor_data.accel_x;
+  robot_state_msg.accel_y = sensor_data.accel_y;
+  robot_state_msg.accel_z = sensor_data.accel_z;
+  robot_state_msg.gyro_x = sensor_data.gyro_x;
+  robot_state_msg.gyro_y = sensor_data.gyro_y;
+  robot_state_msg.gyro_z = sensor_data.gyro_z;
 
-  // Fill motor data
-  motor_data_array[0] = car.speed;
-  motor_data_array[1] = car.steeringAngle;
-  motor_data_array[2] = car.getRightMotorRPM();
-  motor_data_array[3] = car.getLeftMotorRPM();
+  // Motor Data
+  robot_state_msg.speed = car.speed;
+  robot_state_msg.steering_angle = car.steeringAngle;
+  robot_state_msg.right_motor_rpm = car.rightMotor.getCurrentRPM();
+  robot_state_msg.left_motor_rpm = car.leftMotor.getCurrentRPM();
 
-  // Debug data is now handled by separate high-frequency timer
+  // System Status
+  robot_state_msg.free_heap = ESP.getFreeHeap();
 
-  // Set timestamps
+  // Set header timestamp (like odometry does)
   struct timespec time_stamp = getTime();
+  robot_state_msg.header.stamp.sec = time_stamp.tv_sec;
+  robot_state_msg.header.stamp.nanosec = time_stamp.tv_nsec;
+  robot_state_msg.header.frame_id.data = "base_link";
+  robot_state_msg.header.frame_id.size = 9;
+  robot_state_msg.header.frame_id.capacity = 9;
 
-  imu_msg.header.stamp.sec = time_stamp.tv_sec;
-  imu_msg.header.stamp.nanosec = time_stamp.tv_nsec;
-  imu_msg.header.frame_id.data = (char *)"imu_link";
-  imu_msg.header.frame_id.size = 8;
-  imu_msg.header.frame_id.capacity = 8;
-
-  // Publish data
-  RCSOFTCHECK(rcl_publish(&imu_publisher, &imu_msg, NULL));
-  RCSOFTCHECK(rcl_publish(&motor_data_publisher, &motor_data_msg, NULL));
-  // Debug data is published by separate high-frequency timer
+  // Publish combined robot state data
+  RCSOFTCHECK(rcl_publish(&robot_state_publisher, &robot_state_msg, NULL));
 }
 
 void syncTime()
