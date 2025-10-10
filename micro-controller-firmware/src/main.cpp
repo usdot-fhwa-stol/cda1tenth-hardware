@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include "USB.h"
 #include "USBCDC.h"
-#include <WiFi.h>
 #include <micro_ros_platformio.h>
 #include <stdio.h>
 
@@ -59,19 +58,14 @@
 #define LED_PIN 37
 
 // ROS Publishers and Subscribers
-rcl_publisher_t robot_state_publisher; // Combined IMU and motor data
+rcl_publisher_t robot_state_publisher;
 rcl_publisher_t debug_publisher;
-// rcl_publisher_t odom_publisher;  // Commented out for high-rate testing
-// rcl_publisher_t latency_echo_publisher;  // Removed latency test functionality
 rcl_subscription_t twist_subscriber;
-// rcl_subscription_t latency_test_subscriber;  // Removed latency test functionality
 
 // ROS Messages
-robot_state_msgs__msg__RobotState robot_state_msg; // Combined IMU and motor data
+robot_state_msgs__msg__RobotState robot_state_msg;
 std_msgs__msg__Float32MultiArray debug_msg;
 geometry_msgs__msg__Twist twist_msg;
-// std_msgs__msg__UInt64 latency_test_msg;  // Removed latency test functionality
-// std_msgs__msg__UInt64 latency_echo_msg;  // Removed latency test functionality
 
 // ROS Infrastructure
 rclc_executor_t executor;
@@ -81,11 +75,6 @@ rcl_node_t node;
 rcl_timer_t control_timer;
 rcl_timer_t debug_timer;
 rcl_timer_t kinematics_timer;
-// rcl_timer_t odom_timer;  // Commented out for high-rate testing
-
-// WiFi credentials - UPDATE THESE FOR YOUR NETWORK
-char ssid[] = "EnglishHome2.4";
-char password[] = "970-402-1912";
 
 // Global objects
 Car car(CS_RIGHT, CS_LEFT, CS_STEER);
@@ -117,7 +106,6 @@ struct timespec getTime();
 void controlCallback(rcl_timer_t *timer, int64_t last_call_time);
 void debugCallback(rcl_timer_t *timer, int64_t last_call_time);
 void kinematicsCallback(rcl_timer_t *timer, int64_t last_call_time);
-// void odomCallback(rcl_timer_t *timer, int64_t last_call_time);  // Commented out for high-rate testing
 void twistCallback(const void *msgin);
 // void latencyTestCallback(const void *msgin);  // Removed latency test functionality
 
@@ -128,66 +116,7 @@ void setup()
 {
   pinMode(LED_PIN, OUTPUT);
 
-  // Initialize USB
-  USB.begin();
-  USBSerial.begin(115200);
-  delay(1000);
-
-  // Print MAC address
-  USBSerial.print("ESP32-S3 MAC Address: ");
-  USBSerial.println(WiFi.macAddress());
-
-  // Initialize WiFi
-  USBSerial.print("Connecting to WiFi: ");
-  USBSerial.println(ssid);
-
-  // Set WiFi mode to station
-  WiFi.mode(WIFI_STA);
-
-  // Configure static IP for subnet 172.250.250.0/24
-  IPAddress local_IP(172, 250, 250, 83);
-  IPAddress gateway(172, 250, 250, 1);
-  IPAddress subnet(255, 255, 255, 0);
-  WiFi.config(local_IP, gateway, subnet);
-
-  WiFi.begin(ssid, password);
-
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20)
-  {
-    delay(500);
-    flashLED(1); // Flash LED while connecting
-    USBSerial.print(".");
-    attempts++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    // WiFi connected - solid LED for 2 seconds
-    digitalWrite(LED_PIN, HIGH);
-    delay(2000);
-    digitalWrite(LED_PIN, LOW);
-
-    // Print WiFi connection info
-    USBSerial.println();
-    USBSerial.print("WiFi connected! IP address: ");
-    USBSerial.println(WiFi.localIP());
-    USBSerial.print("Signal strength (RSSI): ");
-    USBSerial.print(WiFi.RSSI());
-    USBSerial.println(" dBm");
-  }
-  else
-  {
-    USBSerial.println();
-    USBSerial.println("WiFi connection failed!");
-    // Flash LED rapidly to indicate failure
-    for (int i = 0; i < 10; i++)
-    {
-      flashLED(1);
-      delay(200);
-    }
-  }
-
+  // Initialize car control system first (like working version)
   // Initialize SPI for motor drivers
   SPI.begin();
   SPI.setFrequency(1000000); // 1MHz SPI frequency
@@ -205,10 +134,26 @@ void setup()
   // Initialize odometry with robot parameters
   odometry.initialize(0.3f, 0.2f, 0.05f); // wheelbase, track_width, wheel_radius
 
-  // Initialize micro ROS transport with WiFi
-  IPAddress agent_ip(172, 250, 250, 85);
-  set_microros_wifi_transports(ssid, password, agent_ip, 8888);
-  delay(2000);
+  USB.begin();
+  USBSerial.begin(921600);
+
+  // Wait for USB to be ready (like working version)
+  while (!USBSerial)
+  {
+    delay(10);
+    flashLED(1); // Flash LED while waiting for serial connection
+  }
+
+  delay(2000); // Give more time for serial to initialize (like working version)
+
+  // Serial connection established - flash LED twice to indicate ready
+  flashLED(2);
+
+  // Configure Micro-ROS library to use USB CDC serial (like working version)
+  set_microros_serial_transports(USBSerial);
+
+  // Flash LED 6 times to indicate micro-ROS transport initialized
+  flashLED(6);
 
   // Initialize ROS messages first
   robot_state_msgs__msg__RobotState__init(&robot_state_msg);
@@ -228,10 +173,25 @@ void setup()
 
 void loop()
 {
+  static bool loop_started = false;
+  if (!loop_started)
+  {
+    // Flash LED 7 times to indicate main loop started
+    flashLED(7);
+    loop_started = true;
+  }
+
   switch (state)
   {
   case WAITING_AGENT:
     digitalWrite(LED_PIN, LOW); // LED OFF - no agent
+    static bool waiting_announced = false;
+    if (!waiting_announced)
+    {
+      // Flash LED 8 times to indicate waiting for agent
+      flashLED(8);
+      waiting_announced = true;
+    }
     EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;);
     break;
   case AGENT_AVAILABLE:
@@ -239,19 +199,30 @@ void loop()
     state = (true == createEntities()) ? AGENT_CONNECTED : WAITING_AGENT;
     if (state == WAITING_AGENT)
     {
+      // Flash LED 4 times to indicate entity creation failure
+      flashLED(4);
       destroyEntities();
     }
     break;
   case AGENT_CONNECTED:
     digitalWrite(LED_PIN, HIGH); // LED ON - connected
+    static bool connection_announced = false;
+    if (!connection_announced)
+    {
+      // Flash LED 3 times to indicate successful connection
+      flashLED(3);
+      connection_announced = true;
+    }
     EXECUTE_EVERY_N_MS(200, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
     if (state == AGENT_CONNECTED)
     {
-      rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
+      rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10)); // Use 10ms like working version
     }
     break;
   case AGENT_DISCONNECTED:
     digitalWrite(LED_PIN, LOW); // LED OFF - disconnected
+    // Flash LED 5 times to indicate disconnection
+    flashLED(5);
     destroyEntities();
     state = WAITING_AGENT;
     break;
@@ -259,6 +230,9 @@ void loop()
     digitalWrite(LED_PIN, LOW); // LED OFF - unknown state
     break;
   }
+
+  // Update car control loops (like working version)
+  car.updateControlLoops();
 }
 
 void controlCallback(rcl_timer_t *timer, int64_t last_call_time)
@@ -345,50 +319,6 @@ void twistCallback(const void *msgin)
 
 // Removed latencyTestCallback function for high-rate testing
 
-// Commented out odomCallback for high-rate testing
-/*
-void odomCallback(rcl_timer_t *timer, int64_t last_call_time)
-{
-  RCLC_UNUSED(last_call_time);
-  if (timer != NULL)
-  {
-    // Get current motor RPMs
-    float left_rpm = car.getLeftMotorRPM();
-    float right_rpm = car.getRightMotorRPM();
-    float steering_angle = car.steeringAngle;
-
-    // Debug: Store motor RPMs in debug array for monitoring
-    debug_data_array[17] = right_rpm; // Right motor RPM
-    debug_data_array[18] = left_rpm;  // Left motor RPM
-
-    // Calculate time delta (convert to seconds)
-    static unsigned long prev_odom_time = 0;
-    unsigned long current_time = millis();
-    float dt = 0.033f; // Default to 30Hz (33ms)
-
-    if (prev_odom_time > 0)
-    {
-      dt = (current_time - prev_odom_time) / 1000.0f;
-    }
-    prev_odom_time = current_time;
-
-    // Update odometry
-    odometry.update(left_rpm, right_rpm, steering_angle, dt);
-
-    // Get odometry message
-    nav_msgs__msg__Odometry *odom_msg = odometry.getOdometryMessage();
-
-    // Set timestamp
-    struct timespec time_stamp = getTime();
-    odom_msg->header.stamp.sec = time_stamp.tv_sec;
-    odom_msg->header.stamp.nanosec = time_stamp.tv_nsec;
-
-    // Publish odometry
-    RCSOFTCHECK(rcl_publish(&odom_publisher, odom_msg, NULL));
-  }
-}
-*/
-
 bool createEntities()
 {
   allocator = rcl_get_default_allocator();
@@ -413,25 +343,11 @@ bool createEntities()
       ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
       "debug_data"));
 
-  // Commented out odometry publisher for high-rate testing
-  /*
-  RCCHECK(rclc_publisher_init_best_effort(
-      &odom_publisher,
-      &node,
-      ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
-      "odom"));
-  */
-
-  // Removed latency echo publisher for high-rate testing
-
-  // Create twist command subscriber with best effort QoS
   RCCHECK(rclc_subscription_init_best_effort(
       &twist_subscriber,
       &node,
       ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
       "cmd_vel_filtered"));
-
-  // Removed latency test subscriber for high-rate testing
 
   const unsigned int control_timeout = 20;
   RCCHECK(rclc_timer_init_default(
@@ -454,16 +370,6 @@ bool createEntities()
       RCL_MS_TO_NS(kinematics_timeout),
       kinematicsCallback));
 
-  // Commented out odometry timer for high-rate testing
-  /*
-  const unsigned int odom_timeout = 20;
-  RCCHECK(rclc_timer_init_default(
-      &odom_timer,
-      &support,
-      RCL_MS_TO_NS(odom_timeout),
-      odomCallback));
-  */
-
   // Create executor (increased size for kinematics timer)
   executor = rclc_executor_get_zero_initialized_executor();
   RCCHECK(rclc_executor_init(&executor, &support.context, 4, &allocator));
@@ -478,7 +384,6 @@ bool createEntities()
   RCCHECK(rclc_executor_add_timer(&executor, &control_timer));
   RCCHECK(rclc_executor_add_timer(&executor, &debug_timer));
   RCCHECK(rclc_executor_add_timer(&executor, &kinematics_timer));
-  // Removed latency test subscriber and odometry timer for high-rate testing
 
   // Synchronize time with the agent
   syncTime();
@@ -493,15 +398,11 @@ bool destroyEntities()
 
   rcl_publisher_fini(&robot_state_publisher, &node);
   rcl_publisher_fini(&debug_publisher, &node);
-  // rcl_publisher_fini(&odom_publisher, &node);  // Commented out for high-rate testing
-  // rcl_publisher_fini(&latency_echo_publisher, &node);  // Removed latency test functionality
   rcl_subscription_fini(&twist_subscriber, &node);
-  // rcl_subscription_fini(&latency_test_subscriber, &node);  // Removed latency test functionality
   rcl_node_fini(&node);
   rcl_timer_fini(&control_timer);
   rcl_timer_fini(&debug_timer);
   rcl_timer_fini(&kinematics_timer);
-  // rcl_timer_fini(&odom_timer);  // Commented out for high-rate testing
   rclc_executor_fini(&executor);
   rclc_support_fini(&support);
 
@@ -554,10 +455,14 @@ void moveBase()
   if (speed_rpm < -300.0f)
     speed_rpm = -300.0f;
 
+  // Debug output - keep essential motor RPM data
+  debug_data_array[14] = car.getRightMotorRPM(); // Right motor RPM
+  debug_data_array[15] = car.getLeftMotorRPM();  // Left motor RPM
+
   // Set steering angle first
   car.setSteeringAngle(steering_angle);
 
-  // Apply motor commands using differential drive logic
+  // Apply motor commands with software differential
   car.setSpeed(speed_rpm, 0.3f, 0.2f); // wheelbase=0.3m, track_width=0.2m
 
   // Update car control loops
@@ -580,8 +485,8 @@ void publishData()
   // Motor Data
   robot_state_msg.speed = car.speed;
   robot_state_msg.steering_angle = car.steeringAngle;
-  robot_state_msg.right_motor_rpm = car.rightMotor.getCurrentRPM();
-  robot_state_msg.left_motor_rpm = car.leftMotor.getCurrentRPM();
+  robot_state_msg.right_motor_rpm = car.getRightMotorRPM();
+  robot_state_msg.left_motor_rpm = car.getLeftMotorRPM();
 
   // System Status
   robot_state_msg.free_heap = ESP.getFreeHeap();

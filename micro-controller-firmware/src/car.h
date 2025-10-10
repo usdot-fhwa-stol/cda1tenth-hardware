@@ -76,18 +76,8 @@ public:
   void setSpeed(float rpm);
   void updateControlLoop();
   float getCurrentRPM() const;
-  
-private:
-  bool safeSPIOperation();
 };
 
-// Motor command structure for non-blocking operation
-struct MotorCommand {
-  float speed_rpm = 0.0f;
-  float steering_angle = 0.0f;
-  uint32_t timestamp = 0;
-  bool valid = false;
-};
 
 class Car {
 public:
@@ -107,31 +97,20 @@ public:
   float getRightMotorRPM() const;
   float getLeftMotorRPM() const;
   
-  // Non-blocking command queue
-  void queueMotorCommand(float speed_rpm, float steering_angle);
-  void processCommandQueue();
   
   // Timeout and error handling
   bool isDriverHealthy();
   void emergencyStop();
+  
 
 private:
-  // Command queue for non-blocking operation
-  static const int COMMAND_QUEUE_SIZE = 5;
-  MotorCommand command_queue_[COMMAND_QUEUE_SIZE];
-  int queue_head_ = 0;
-  int queue_tail_ = 0;
-  int queue_count_ = 0;
-  
   // Timeout tracking
   uint32_t last_motor_update_ = 0;
   uint32_t last_steering_update_ = 0;
   bool driver_healthy_ = true;
   
-  // Non-blocking helper functions
-  bool addToQueue(const MotorCommand& cmd);
-  bool getFromQueue(MotorCommand& cmd);
-  void clearQueue();
+  // Helper functions
+  void applyMotorSpeeds();
 };
 
 #endif // CAR_H   

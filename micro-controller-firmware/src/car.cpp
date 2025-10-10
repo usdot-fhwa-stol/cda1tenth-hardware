@@ -6,20 +6,28 @@ SteeringMotor::SteeringMotor(int cs) : driver(cs, R_SENSE), cs_pin(cs) {}
 
 void SteeringMotor::begin()
 {
+  // Pin setup
   pinMode(cs_pin, OUTPUT);
   digitalWrite(cs_pin, HIGH);
+
+  // Driver initialization
   driver.begin();
-  driver.rms_current(300);
-  driver.ihold(5);      // Hold torque when idle
-  driver.irun(50);      // Run torque
-  driver.iholddelay(5); // Delay before lowering to hold current
   driver.microsteps(MICROSTEPS);
+  driver.RAMPMODE(0); // Positioning mode
+
+  // Current settings
+  driver.rms_current(300);
+  driver.ihold(5);
+  driver.irun(50);
+  driver.iholddelay(5);
+
+  // PWM settings
   driver.en_pwm_mode(false);
   driver.pwm_autoscale(true);
   driver.toff(3);
   driver.blank_time(24);
 
-  // Internal motion profile parameters
+  // Motion profile
   driver.a1(500);
   driver.v1(500);
   driver.AMAX(5000);
@@ -28,7 +36,6 @@ void SteeringMotor::begin()
   driver.d1(500);
   driver.VSTOP(10);
 
-  driver.RAMPMODE(0); // Positioning mode
   lastCorrectionMicros = micros();
 }
 
@@ -109,71 +116,56 @@ DriveMotor::DriveMotor(int cs) : driver(cs, R_SENSE), cs_pin(cs) {}
 
 void DriveMotor::begin()
 {
+  // Pin setup
   pinMode(cs_pin, OUTPUT);
   pinMode(EN_PIN, OUTPUT);
   digitalWrite(EN_PIN, LOW);
+
+  // Driver initialization
   driver.begin();
-  driver.shaft(true);
-  driver.rms_current(1000);
   driver.microsteps(MICROSTEPS);
+  driver.RAMPMODE(2); // Velocity mode
+  driver.shaft(true);
+  driver.X_ENC(0);
+
+  // Current settings
+  driver.rms_current(1000);
+  driver.ihold(10);
+  driver.irun(31);
+  driver.iholddelay(5);
+
+  // PWM and stealthChop settings
   driver.en_pwm_mode(true);
   driver.pwm_autoscale(true);
+  driver.toff(3);
+  driver.blank_time(24);
   driver.TCOOLTHRS(0xFFFFF);
   driver.THIGH(0);
   driver.semin(5);
   driver.semax(2);
   driver.sedn(0b01);
-  driver.toff(3);
-  driver.blank_time(24);
-  driver.ihold(10);
-  driver.irun(31);
-  driver.iholddelay(5);
   driver.VDCMIN(0);
+
+  // Motion profile
   driver.a1(1000);
   driver.v1(1000);
   driver.AMAX(1000);
   driver.DMAX(1000);
   driver.d1(1000);
   driver.VSTOP(10);
-  driver.RAMPMODE(2); // Velocity mode for continuous movement
-  driver.X_ENC(0);
+
+  // Initialize RPM calculation variables
+  last_time = micros();
+  last_enc = driver.X_ENC();
+  current_rpm = 0.0f;
 }
 
-// TMC5160 recovery function from old working code
-bool tmc5160_recover(TMC5160Stepper &drv, int ENN_PIN)
+// Simple driver reset function
+void resetDriver(TMC5160Stepper &drv, int ENN_PIN)
 {
-  // 1) disable outputs
   digitalWrite(ENN_PIN, HIGH);
-  drv.toff(0);
-
-  // 2) clear faults
-  drv.GSTAT(0b111);
-
-  // 3) let VCP recharge
-  delay(3);
-
-  drv.irun(10);
-  drv.toff(3);
-  digitalWrite(ENN_PIN, LOW);
-
-  delay(2);
-
-  // 5) confirm no UV_CP
-  uint8_t gstat = drv.GSTAT();
-
-  drv.irun(31);
-  drv.toff(10);
-
-  return (gstat & (1 << 2)) == 0;
-}
-
-// Simplified recovery - just reset driver state
-void simpleDriverReset(TMC5160Stepper &drv, int ENN_PIN)
-{
-  // Quick reset without complex state machine
-  digitalWrite(ENN_PIN, HIGH);
-  delayMicroseconds(100); // Very short delay
-  drv.GSTAT(0b111);       // Clear faults
+  delayMicroseconds(100);
+  drv.GSTAT(0b111); // Clear faults
   digitalWrite(ENN_PIN, LOW);
 }
 
@@ -185,12 +177,10 @@ void DriveMotor::setSpeed(float rpm)
 
 void DriveMotor::updateControlLoop()
 {
+  // Simple fault check and reset
   if (driver.GSTAT() & (1 << 2))
-  { // Check for UV_CP fault
-    if (!tmc5160_recover(driver, EN_PIN))
-    {
-      return; // Recovery failed, do not proceed
-    }
+  {
+    resetDriver(driver, EN_PIN);
   }
 
   int32_t current_enc = driver.X_ENC();
@@ -198,24 +188,28 @@ void DriveMotor::updateControlLoop()
   uint32_t dt = now - last_time;
   int32_t delta_enc = current_enc - last_enc;
 
-  // Avoid division by zero
-  if (dt > 0)
+  // Calculate RPM if we have valid timing data
+  if (dt > 0 && last_time > 0)
   {
     float measured_ticks_per_sec = (float)delta_enc * 1e6f / dt;
-    float measured_steps_per_sec = measured_ticks_per_sec * (MOTOR_STEPS * MICROSTEPS / ENCODER_TICKS_PER_REVOLUTION);
-    measured_steps_per_sec = abs(measured_steps_per_sec);
+    float measured_steps_per_sec = measured_ticks_per_sec * ((float)(MOTOR_STEPS * MICROSTEPS) / (float)ENCODER_TICKS_PER_REVOLUTION);
+    current_rpm = (measured_steps_per_sec / (float)(MOTOR_STEPS * MICROSTEPS)) * 60.0f;
 
-    // Calculate current RPM
-    current_rpm = (measured_steps_per_sec / (MOTOR_STEPS * MICROSTEPS)) * 60.0f;
+    // Apply direction
+    if (target_rpm < 0.0f && current_rpm > 0.0f)
+    {
+      current_rpm = -current_rpm;
+    }
+  }
+  else if (target_steps_per_sec == 0)
+  {
+    current_rpm = 0.0f;
   }
 
-  // Only update motor if speed has changed
+  // Update motor speed if changed
   if (step_rate_cmd != target_steps_per_sec)
   {
-    // Direct speed control - no rate limiting
     step_rate_cmd = target_steps_per_sec;
-
-    // Clamp to non-negative
     if (step_rate_cmd < 0.0f)
       step_rate_cmd = 0.0f;
 
@@ -227,26 +221,6 @@ void DriveMotor::updateControlLoop()
   last_time = now;
 }
 
-bool DriveMotor::safeSPIOperation()
-{
-  // Quick fault check without blocking
-  uint8_t gstat = driver.GSTAT();
-  if (gstat & (1 << 2))
-  { // UV_CP fault
-    driver_ready = false;
-    return false;
-  }
-
-  // Driver is ready
-  driver_ready = true;
-
-  // Set motor parameters with minimal SPI operations
-  driver.VMAX(target_steps_per_sec);
-  driver.shaft(target_rpm < 0);
-
-  return true;
-}
-
 float DriveMotor::getCurrentRPM() const
 {
   return current_rpm;
@@ -255,134 +229,70 @@ float DriveMotor::getCurrentRPM() const
 Car::Car(int rightCS, int leftCS, int steerCS)
     : rightMotor(rightCS), leftMotor(leftCS), steeringMotor(steerCS)
 {
-  // Initialize command queue
-  clearQueue();
 }
 
-// Non-blocking command queue implementation
-void Car::queueMotorCommand(float speed_rpm, float steering_angle)
+void Car::applyMotorSpeeds()
 {
-  MotorCommand cmd;
-  cmd.speed_rpm = speed_rpm;
-  cmd.steering_angle = steering_angle;
-  cmd.timestamp = millis();
-  cmd.valid = true;
+  // Software differential for front-wheel steering car
+  // When turning, the inner wheel should slow down and outer wheel should speed up
+  const float steeringAngleRad = steeringAngle * (M_PI / 180.0f);
+  constexpr float minTurnAngle = 0.01f; // radians
 
-  addToQueue(cmd);
-}
-
-void Car::processCommandQueue()
-{
-  MotorCommand cmd;
-  uint32_t now = millis();
-
-  // Emergency stop if queue gets too full (indicates system overload)
-  if (queue_count_ >= COMMAND_QUEUE_SIZE - 1)
+  if (fabsf(steeringAngleRad) < minTurnAngle)
   {
-    emergencyStop();
-    return;
+    // Straight line - both motors same speed
+    rightMotor.setSpeed(speed);
+    leftMotor.setSpeed(-speed);
   }
-
-  // Limit queue processing to prevent system overload - reduced for dual-joystick
-  int processed = 0;
-  const int MAX_PROCESS_PER_CYCLE = 1; // Reduced from 2 to 1 for stability
-
-  while (getFromQueue(cmd) && processed < MAX_PROCESS_PER_CYCLE)
+  else
   {
-    processed++;
+    // Calculate differential speeds based on turning radius
+    // For a turn, the inner wheel travels a shorter distance than the outer wheel
+    float turning_radius = wheelbase / tanf(fabsf(steeringAngleRad));
 
-    // Process steering command with longer intervals for stability
-    if (fabsf(cmd.steering_angle - steeringAngle) > 0.3f) // Increased threshold further
+    // Calculate the radius for each rear wheel
+    float inner_radius = turning_radius - (trackWidth / 2.0f);
+    float outer_radius = turning_radius + (trackWidth / 2.0f);
+
+    // Calculate speed ratio (inner wheel should be slower)
+    float speed_ratio = inner_radius / outer_radius;
+
+    // Apply differential speeds
+    if (steeringAngleRad > 0) // Turning left
     {
-      if (now - last_steering_update_ > 100) // Increased to 100ms for stability
-      {
-        steeringAngle = cmd.steering_angle;
-        steeringMotor.setTargetAngle(cmd.steering_angle);
-        last_steering_update_ = now;
-      }
+      // Left wheel is inner (slower), right wheel is outer (faster)
+      rightMotor.setSpeed(speed);
+      leftMotor.setSpeed(-speed * speed_ratio);
     }
-
-    // Process speed command with longer intervals for stability
-    if (fabsf(cmd.speed_rpm - speed) > 0.3f) // Increased threshold further
+    else // Turning right
     {
-      if (now - last_motor_update_ > 100) // Increased to 100ms for stability
-      {
-        speed = cmd.speed_rpm;
-        rightMotor.setSpeed(speed);
-        leftMotor.setSpeed(-speed);
-        last_motor_update_ = now;
-      }
+      // Right wheel is inner (slower), left wheel is outer (faster)
+      rightMotor.setSpeed(speed * speed_ratio);
+      leftMotor.setSpeed(-speed);
     }
   }
-}
-
-bool Car::addToQueue(const MotorCommand &cmd)
-{
-  if (queue_count_ >= COMMAND_QUEUE_SIZE)
-  {
-    // Queue full, drop oldest command
-    queue_head_ = (queue_head_ + 1) % COMMAND_QUEUE_SIZE;
-    queue_count_--;
-  }
-
-  command_queue_[queue_tail_] = cmd;
-  queue_tail_ = (queue_tail_ + 1) % COMMAND_QUEUE_SIZE;
-  queue_count_++;
-  return true;
-}
-
-bool Car::getFromQueue(MotorCommand &cmd)
-{
-  if (queue_count_ == 0)
-  {
-    return false;
-  }
-
-  cmd = command_queue_[queue_head_];
-  queue_head_ = (queue_head_ + 1) % COMMAND_QUEUE_SIZE;
-  queue_count_--;
-  return true;
-}
-
-void Car::clearQueue()
-{
-  queue_head_ = 0;
-  queue_tail_ = 0;
-  queue_count_ = 0;
 }
 
 bool Car::isDriverHealthy()
 {
-  // Check if drivers are responding (non-blocking)
-  uint32_t now = millis();
-
-  // Check if we haven't updated motors in too long
-  if (now - last_motor_update_ > 1000)
-  { // 1 second timeout
-    driver_healthy_ = false;
-  }
-
-  return driver_healthy_;
+  // Simple timeout check - if no motor updates in 1 second, consider unhealthy
+  return (millis() - last_motor_update_) < 1000;
 }
 
 void Car::emergencyStop()
 {
-  // Immediate stop without queuing
+  // Immediate stop
   speed = 0.0f;
   steeringAngle = 0.0f;
   rightMotor.setSpeed(0.0f);
   leftMotor.setSpeed(0.0f);
   steeringMotor.setTargetAngle(0.0f);
-  clearQueue();
-  driver_healthy_ = true;
+  last_motor_update_ = millis(); // Reset health timer
 }
 
 void Car::updateControlLoops()
 {
-  // Process queued motor commands
-  processCommandQueue();
-
-  // Update motor control loops directly (like old working code)
+  // Update motor control loops directly
   rightMotor.updateControlLoop();
   leftMotor.updateControlLoop();
   steeringMotor.updatePosition();
@@ -400,8 +310,10 @@ void Car::begin()
 
 void Car::setSteeringAngle(float angle)
 {
-  // Queue the command for non-blocking operation
-  queueMotorCommand(speed, angle);
+  // Direct control - bypass queue for immediate response
+  steeringAngle = angle;
+  steeringMotor.setTargetAngle(angle);
+  last_steering_update_ = millis();
 }
 
 void Car::setSpeed(float rpm, float wheelbase, float trackWidth)
@@ -411,28 +323,9 @@ void Car::setSpeed(float rpm, float wheelbase, float trackWidth)
   this->trackWidth = trackWidth;
   speed = rpm;
 
-  // steeringAngle is stored in degrees in this class; convert to radians for trig
-  const float steeringAngleRad = steeringAngle * (M_PI / 180.0f);
-  constexpr float minTurnAngle = 0.01f; // radians
-
-  if (fabsf(steeringAngleRad) < minTurnAngle)
-  {
-    rightMotor.setSpeed(rpm);
-    leftMotor.setSpeed(-rpm);
-    return;
-  }
-
-  float R = wheelbase / tanf(steeringAngleRad);
-  float R_L = R - (trackWidth / 2.0f);
-  float R_R = R + (trackWidth / 2.0f);
-
-  float v_L = rpm * (R_L / R);
-  float v_R = rpm * (R_R / R);
-
-  rightMotor.setSpeed(v_R);
-
-  // left motor requires opposite rotation of right motor due to mirroring on car
-  leftMotor.setSpeed(-v_L);
+  // Apply motor speeds with software differential
+  applyMotorSpeeds();
+  last_motor_update_ = millis();
 }
 
 float Car::getRightMotorRPM() const
