@@ -488,9 +488,6 @@ void publishData()
   robot_state_msg.right_motor_rpm = car.getRightMotorRPM();
   robot_state_msg.left_motor_rpm = car.getLeftMotorRPM();
 
-  // System Status
-  robot_state_msg.free_heap = ESP.getFreeHeap();
-
   // Set header timestamp (like odometry does)
   struct timespec time_stamp = getTime();
   robot_state_msg.header.stamp.sec = time_stamp.tv_sec;

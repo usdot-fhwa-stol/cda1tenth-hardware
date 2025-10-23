@@ -1,17 +1,33 @@
 # Car Odometry Node
 
-This ROS2 node calculates odometry from raw sensor data published by the ESP32 firmware.
+This ROS2 node calculates odometry from robot state data published by the ESP32 firmware using the unified RobotState message format.
 
 ## Overview
 
 The odometry node subscribes to:
-- `/imu/data` - IMU data (accelerometer, gyroscope, orientation)
-- `/motor_data` - Motor RPM and current data
+- `/robot_state` - Unified robot state message containing IMU and motor data
 
 And publishes:
 - `/odom` - Standard ROS2 odometry message
 - `/odom_twist` - Twist message for debugging
 - TF transforms from `odom` to `base_link`
+
+## RobotState Message Integration
+
+This node has been updated to use the unified RobotState message instead of separate IMU and motor topics. This provides:
+
+- **Simplified Architecture**: Single message type instead of multiple separate topics
+- **Synchronized Data**: All sensor data arrives in a single, synchronized message
+- **Reduced Network Overhead**: Single message instead of multiple separate messages
+- **Easier Integration**: Simpler subscriber logic and data management
+- **Better Performance**: Reduced message passing overhead
+
+### RobotState Message Structure
+
+The RobotState message contains:
+- **Header**: Standard ROS header with timestamp and frame_id
+- **IMU Data**: `accel_x`, `accel_y`, `accel_z`, `gyro_x`, `gyro_y`, `gyro_z`
+- **Motor Data**: `speed`, `steering_angle`, `right_motor_rpm`, `left_motor_rpm`
 
 ## Features
 
@@ -19,7 +35,7 @@ And publishes:
 - **Configurable parameters**: Wheel radius, wheelbase, track width
 - **Covariance estimation**: Proper uncertainty modeling
 - **TF broadcasting**: Standard ROS2 transform tree
-- **Python and C++ implementations**: Choose your preferred language
+- **Python implementation**: Clean, maintainable Python code
 
 ## Installation
 
@@ -29,6 +45,7 @@ And publishes:
 # Install ROS2 dependencies
 sudo apt install ros-humble-sensor-msgs ros-humble-nav-msgs ros-humble-geometry-msgs
 sudo apt install ros-humble-tf2-ros ros-humble-tf2-geometry-msgs
+sudo apt install ros-humble-robot-state-msgs
 ```
 
 ### Build the package
@@ -44,10 +61,7 @@ source install/setup.bash
 ### Basic Usage
 
 ```bash
-# Run the odometry node
-ros2 run car_odometry odometry_node
-
-# Or use the Python version
+# Run the Python odometry node
 ros2 run car_odometry odometry_node.py
 ```
 
@@ -62,6 +76,9 @@ ros2 launch car_odometry car_odometry.launch.py \
     wheel_radius:=0.03 \
     wheelbase:=0.185 \
     track_width:=0.15
+
+# Test with robot state messages
+ros2 launch car_odometry test_robot_state_odometry.launch.py
 ```
 
 ### With Configuration File
@@ -86,8 +103,7 @@ ros2 run car_odometry odometry_node --ros-args --params-file config/car_params.y
 
 ### Subscribed Topics
 
-- `/imu/data` (sensor_msgs/Imu): IMU data from ESP32
-- `/motor_data` (std_msgs/Float32MultiArray): Motor RPM data from ESP32
+- `/robot_state` (robot_state_msgs/RobotState): Unified robot state message containing IMU and motor data
 
 ### Published Topics
 
@@ -135,11 +151,8 @@ ros2 run tf2_tools view_frames
 ### Monitor Sensor Data
 
 ```bash
-# Check IMU data
-ros2 topic echo /imu/data
-
-# Check motor data
-ros2 topic echo /motor_data
+# Check robot state data
+ros2 topic echo /robot_state
 
 # List all topics
 ros2 topic list
@@ -152,14 +165,42 @@ ros2 topic list
 ros2 run rviz2 rviz2 -d config/odometry.rviz
 ```
 
+## Testing
+
+### Test Scripts
+
+The package includes test scripts to verify the RobotState integration:
+
+```bash
+# Run the test script that publishes mock RobotState messages
+ros2 run car_odometry test_robot_state_odometry.py
+
+# Or use the test launch file
+ros2 launch car_odometry test_robot_state_odometry.launch.py
+```
+
+The test script verifies that:
+- Odometry messages are published correctly
+- Twist messages are published correctly
+- Position and orientation calculations are working
+- Motor RPM data is properly converted to velocities
+
+### Topic Mapping
+
+| Old Topics | New Topic |
+|------------|-----------|
+| `/imu/data` | `/robot_state` |
+| `/motor_data` | `/robot_state` |
+| `/odom` | `/odom` (unchanged) |
+| `/odom_twist` | `/odom_twist` (unchanged) |
+
 ## Troubleshooting
 
 ### Common Issues
 
 1. **No odometry published**: Check if sensor data is being received
    ```bash
-   ros2 topic hz /imu/data
-   ros2 topic hz /motor_data
+   ros2 topic hz /robot_state
    ```
 
 2. **Incorrect odometry**: Verify robot parameters

@@ -62,3 +62,23 @@ ros2 param get  /car_controller odom_period_ms
 ```
 
 https://github.com/micro-ROS/micro_ros_platformio
+
+```bash
+pio run --target clean_microros
+```
+
+
+add robot_state_msgs to the ROS node by doing the following
+1. navigate to your ROS 2 workspace
+   - if you don't have one make it with the following commands:
+       mkdir -p ~/ros2_ws/src
+    cd ~/ros2_ws/src
+2. resolve any required dependencies:
+  cd ~/ros2_ws
+    rosdep install --from-paths src --ignore-src -r -y
+
+3. install the package:
+colcon build
+
+4. source your workspace:
+source install/local_setup.bash

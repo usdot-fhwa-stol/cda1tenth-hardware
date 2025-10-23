@@ -16,6 +16,3 @@ float32 speed
 float32 steering_angle
 float32 right_motor_rpm
 float32 left_motor_rpm
-
-# System Status
-float32 free_heap

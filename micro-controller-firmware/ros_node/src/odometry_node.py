@@ -2,8 +2,7 @@
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Imu
-from std_msgs.msg import Float32MultiArray
+from robot_state_msgs.msg import RobotState
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist, TransformStamped
 from tf2_ros import TransformBroadcaster
@@ -40,10 +39,8 @@ class CarOdometryNode(Node):
         self.last_time = self.get_clock().now()
         
         # Latest sensor data
-        self.latest_imu = None
-        self.latest_motor = None
-        self.imu_received = False
-        self.motor_received = False
+        self.latest_robot_state = None
+        self.robot_state_received = False
         
         # Create QoS profile for reliable communication
         qos_profile = QoSProfile(
@@ -57,10 +54,8 @@ class CarOdometryNode(Node):
         self.twist_publisher = self.create_publisher(Twist, 'odom_twist', 10)
         
         # Create subscribers
-        self.imu_subscription = self.create_subscription(
-            Imu, 'imu/data', self.imu_callback, qos_profile)
-        self.motor_subscription = self.create_subscription(
-            Float32MultiArray, 'motor_data', self.motor_callback, qos_profile)
+        self.robot_state_subscription = self.create_subscription(
+            RobotState, 'robot_state', self.robot_state_callback, qos_profile)
         
         # Create timer for odometry publishing
         timer_period = 1.0 / self.publish_rate
@@ -82,13 +77,9 @@ class CarOdometryNode(Node):
         self.get_logger().info(f'Wheelbase: {self.wheelbase:.3f} m')
         self.get_logger().info(f'Track width: {self.track_width:.3f} m')
     
-    def imu_callback(self, msg):
-        self.latest_imu = msg
-        self.imu_received = True
-    
-    def motor_callback(self, msg):
-        self.latest_motor = msg
-        self.motor_received = True
+    def robot_state_callback(self, msg):
+        self.latest_robot_state = msg
+        self.robot_state_received = True
     
     def set_covariance_matrices(self):
         # Position covariance (6x6 matrix)
@@ -109,7 +100,7 @@ class CarOdometryNode(Node):
         self.odom_msg.twist.covariance[35] = 0.1  # wz
     
     def publish_odometry(self):
-        if not self.imu_received or not self.motor_received:
+        if not self.robot_state_received:
             return  # Don't publish if we don't have sensor data
         
         current_time = self.get_clock().now()
@@ -119,8 +110,8 @@ class CarOdometryNode(Node):
             return  # Avoid division by zero
         
         # Calculate velocities from motor data
-        right_rpm = self.latest_motor.data[0]
-        left_rpm = self.latest_motor.data[1]
+        right_rpm = self.latest_robot_state.right_motor_rpm
+        left_rpm = self.latest_robot_state.left_motor_rpm
         
         # Convert RPM to linear velocities
         right_velocity = (right_rpm / 60.0) * 2.0 * math.pi * self.wheel_radius
@@ -131,8 +122,8 @@ class CarOdometryNode(Node):
         angular_velocity = (right_velocity - left_velocity) / self.track_width
         
         # Alternative: Use IMU for angular velocity (more accurate)
-        if self.imu_received:
-            angular_velocity = self.latest_imu.angular_velocity.z
+        if self.robot_state_received:
+            angular_velocity = self.latest_robot_state.gyro_z
         
         # Update position using integration
         self.x += linear_velocity * math.cos(self.theta) * dt

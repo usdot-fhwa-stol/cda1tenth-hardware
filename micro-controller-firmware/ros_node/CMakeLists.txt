@@ -7,8 +7,8 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(rclcpp_components REQUIRED)
+find_package(ament_python REQUIRED)
+find_package(rclpy REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -16,30 +16,16 @@ find_package(geometry_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(robot_state_msgs REQUIRED)
 
-# Create the odometry node
-add_executable(odometry_node src/odometry_node.cpp)
-ament_target_dependencies(odometry_node
-  rclcpp
-  std_msgs
-  sensor_msgs
-  nav_msgs
-  geometry_msgs
-  tf2
-  tf2_ros
-  tf2_geometry_msgs
-)
-
-# Install the executable
-install(TARGETS
-  odometry_node
-  DESTINATION lib/${PROJECT_NAME}
-)
+# Note: This package uses Python-only implementation
+# No C++ executables are built
 
 # Install Python scripts
 install(PROGRAMS
   src/odometry_node.py
   scripts/test_odometry.py
+  scripts/test_robot_state_odometry.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

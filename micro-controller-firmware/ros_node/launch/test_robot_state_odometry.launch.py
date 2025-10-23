@@ -39,7 +39,7 @@ def generate_launch_description():
             description='Base link frame ID'
         ),
         
-        # Odometry node
+        # Odometry node (Python version)
         Node(
             package='car_odometry',
             executable='odometry_node.py',
@@ -58,5 +58,13 @@ def generate_launch_description():
                 ('odom', '/car_controller/odom'),
                 ('odom_twist', '/car_controller/odom_twist'),
             ]
+        ),
+        
+        # Test robot state publisher
+        Node(
+            package='car_odometry',
+            executable='test_robot_state_odometry.py',
+            name='robot_state_tester',
+            output='screen'
         ),
     ])
