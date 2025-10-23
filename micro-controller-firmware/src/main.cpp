@@ -439,7 +439,7 @@ void moveBase()
     steering_angle = -30.0f;
 
   // Convert linear velocity to RPM
-  float wheel_radius = 0.05f; // meters
+  float wheel_radius = 0.0325f; // meters
   float speed_rpm = (linear_x / wheel_radius) * (60.0f / (2.0f * M_PI));
 
   // Limit speed to reasonable values

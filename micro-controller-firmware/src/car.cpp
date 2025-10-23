@@ -66,12 +66,14 @@ void SteeringMotor::setTargetAngle(float angle)
 
   targetAngle = newTargetAngle;
 
-  // Simplified target setting - let the position update loop handle resync
+  // Use external position control instead of internal TMC5160 control
+  // This gives us more precise control over the steering behavior
   float stepsPerRev = MOTOR_STEPS * MICROSTEPS;
-  float targetSteps = (targetAngle / DEGREES_PER_REVOLUTION) * stepsPerRev * STEERING_GEAR_RATIO;
+  float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
+  float currentSteps = (currentAngle / DEGREES_PER_REVOLUTION) * stepsPerRev * STEERING_GEAR_RATIO;
 
-  // Set target for internal motion control
-  driver.XTARGET((int32_t)targetSteps);
+  // Set current position as actual to avoid conflicts
+  driver.XACTUAL((int32_t)currentSteps);
 }
 
 void SteeringMotor::setCarSpeed(float speed)
@@ -120,7 +122,7 @@ void SteeringMotor::updatePosition()
   float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
   float error = normalizeAngle(targetAngle - currentAngle);
 
-  // // Stall detection: if angle hasn't changed much, increment counter
+  // Stall detection: if angle hasn't changed much, increment counter
   if (fabsf(currentAngle - lastExternalAngle) < SMALL_MOVEMENT_THRESHOLD)
   {
     stallCounter++;
@@ -132,19 +134,38 @@ void SteeringMotor::updatePosition()
   lastExternalAngle = currentAngle;
 
   float stepsPerRev = MOTOR_STEPS * MICROSTEPS;
-  int32_t actualSteps = (int32_t)((currentAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
+  int32_t currentSteps = (int32_t)((currentAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
+  int32_t targetSteps = (int32_t)((targetAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
 
+  // If we've stalled, resync the position
   if (stallCounter > STALL_DETECTION_COUNT)
   {
-    driver.XACTUAL(actualSteps);
+    driver.XACTUAL(currentSteps);
     stallCounter = 0;
   }
 
-  // Only correct position if we're not at zero speed (let steering drift when stopped)
-  // This prevents holding steering position when the car is stationary
+  // Use proportional control for smooth steering correction
+  // Only correct if error is significant and car is moving
   if (fabsf(error) > STEERING_MAX_ALLOWED_ERROR && fabsf(carSpeed) > 0.1f)
   {
-    driver.XACTUAL(actualSteps);
+    // Calculate proportional correction (limit to prevent overcorrection)
+    float maxCorrectionSteps = 100.0f; // Limit correction to prevent sudden jumps
+    int32_t correctionSteps = (int32_t)(error * stepsPerRev * STEERING_GEAR_RATIO / 360.0f);
+
+    // Limit correction magnitude
+    if (correctionSteps > maxCorrectionSteps)
+      correctionSteps = maxCorrectionSteps;
+    else if (correctionSteps < -maxCorrectionSteps)
+      correctionSteps = -maxCorrectionSteps;
+
+    // Apply proportional correction
+    int32_t newTargetSteps = currentSteps + correctionSteps;
+    driver.XTARGET(newTargetSteps);
+  }
+  else
+  {
+    // If error is small, just maintain current position
+    driver.XTARGET(currentSteps);
   }
 }
 

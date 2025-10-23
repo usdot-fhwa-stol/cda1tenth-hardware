@@ -3,7 +3,7 @@
 car_odometry_node:
   ros__parameters:
     # Physical robot parameters
-    wheel_radius: 0.03      # 3cm wheel radius
+    wheel_radius: 0.0325    # 32.5mm wheel radius
     wheelbase: 0.185        # 18.5cm wheelbase
     track_width: 0.15       # 15cm track width
     

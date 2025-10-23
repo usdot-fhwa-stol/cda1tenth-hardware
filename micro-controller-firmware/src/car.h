@@ -26,11 +26,11 @@
 #define DEGREES_PER_REVOLUTION 360.0f
 
 // Steering control parameters
-#define STEERING_CORRECTION_INTERVAL 10000  // 10 ms for more responsive steering
+#define STEERING_CORRECTION_INTERVAL 20000  // 20 ms for smoother steering
 #define STEERING_GEAR_RATIO (55.0f/12.0f) // ≈ 4.5833
-#define STEERING_MAX_ALLOWED_ERROR 5.0f
-#define STALL_DETECTION_COUNT 5
-#define SMALL_MOVEMENT_THRESHOLD 0.5f // degrees
+#define STEERING_MAX_ALLOWED_ERROR 2.0f  // Reduced from 5.0f for more precise control
+#define STALL_DETECTION_COUNT 10  // Increased for more stable stall detection
+#define SMALL_MOVEMENT_THRESHOLD 0.3f // degrees - reduced for more sensitive detection
 
 // Drive motor control parameters
 

@@ -2,6 +2,28 @@
 
 This ROS2 node calculates odometry from robot state data published by the ESP32 firmware using the unified RobotState message format.
 
+## Quick Start
+
+```bash
+# 1. Install dependencies
+sudo apt install ros-humble-sensor-msgs ros-humble-nav-msgs ros-humble-geometry-msgs ros-humble-tf2-ros ros-humble-tf2-geometry-msgs ros-humble-ament-cmake-python
+
+# 2. Build dependencies first
+cd /path/to/your/workspace/extra_packages
+colcon build --packages-select robot_state_msgs
+source install/setup.bash
+
+# 3. Build the odometry package
+cd ../ros_node
+colcon build --packages-select car_odometry
+source install/setup.bash
+
+# 4. Run the node
+ros2 run car_odometry odometry_node.py
+```
+
+**⚠️ Important**: Always build `robot_state_msgs` before `car_odometry` to avoid build errors.
+
 ## Overview
 
 The odometry node subscribes to:
@@ -45,14 +67,32 @@ The RobotState message contains:
 # Install ROS2 dependencies
 sudo apt install ros-humble-sensor-msgs ros-humble-nav-msgs ros-humble-geometry-msgs
 sudo apt install ros-humble-tf2-ros ros-humble-tf2-geometry-msgs
-sudo apt install ros-humble-robot-state-msgs
+sudo apt install ros-humble-ament-cmake-python
 ```
 
 ### Build the package
 
+**⚠️ Important: Build Dependencies First**
+
+This package depends on the custom `robot_state_msgs` package, which must be built first:
+
 ```bash
-cd /path/to/your/workspace
+# 1. Build the custom message package first
+cd /path/to/your/workspace/extra_packages
+colcon build --packages-select robot_state_msgs
+source install/setup.bash
+
+# 2. Build the car_odometry package
+cd ../ros_node
 colcon build --packages-select car_odometry
+source install/setup.bash
+```
+
+**Alternative: Build all packages at once**
+```bash
+# From the workspace root, build all packages
+cd /path/to/your/workspace
+colcon build
 source install/setup.bash
 ```
 
@@ -196,7 +236,34 @@ The test script verifies that:
 
 ## Troubleshooting
 
-### Common Issues
+### Common Build Issues
+
+1. **CMake Error: "Could not find ament_python"**
+   ```
+   CMake Error: By not providing "Findament_python.cmake" in CMAKE_MODULE_PATH...
+   ```
+   **Solution**: The CMakeLists.txt has been fixed to use `ament_cmake_python` instead of `ament_python`. If you encounter this error, ensure you have the latest version of the code.
+
+2. **CMake Error: "Could not find robot_state_msgs"**
+   ```
+   CMake Error: Could not find a package configuration file provided by "robot_state_msgs"
+   ```
+   **Solution**: Build the `robot_state_msgs` package first:
+   ```bash
+   cd /path/to/your/workspace/extra_packages
+   colcon build --packages-select robot_state_msgs
+   source install/setup.bash
+   cd ../ros_node
+   colcon build --packages-select car_odometry
+   ```
+
+3. **Package not found after building**
+   **Solution**: Always source the workspace after building:
+   ```bash
+   source install/setup.bash
+   ```
+
+### Runtime Issues
 
 1. **No odometry published**: Check if sensor data is being received
    ```bash
@@ -213,6 +280,22 @@ The test script verifies that:
    ```bash
    ros2 run tf2_tools view_frames
    ```
+
+### Build Order Reference
+
+For reference, here's the correct build order for all packages in this workspace:
+
+```bash
+# 1. Build custom message packages first
+cd /path/to/your/workspace/extra_packages
+colcon build
+source install/setup.bash
+
+# 2. Build ROS nodes
+cd ../ros_node
+colcon build
+source install/setup.bash
+```
 
 ### Performance Tuning
 
