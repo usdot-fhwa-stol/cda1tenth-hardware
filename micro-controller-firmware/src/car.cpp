@@ -74,12 +74,47 @@ void SteeringMotor::setTargetAngle(float angle)
   driver.XTARGET((int32_t)targetSteps);
 }
 
+void SteeringMotor::setCarSpeed(float speed)
+{
+  carSpeed = speed;
+}
+
+void SteeringMotor::enableMotor(bool enable)
+{
+  motorEnabled = enable;
+  if (enable)
+  {
+    // Re-enable motor with hold current
+    driver.ihold(5);
+    driver.irun(50);
+  }
+  else
+  {
+    // Disable motor by setting hold current to 0
+    driver.ihold(0);
+    driver.irun(0);
+  }
+}
+
 void SteeringMotor::updatePosition()
 {
   uint32_t now = micros();
   if (now - lastCorrectionMicros < STEERING_CORRECTION_INTERVAL)
     return;
   lastCorrectionMicros = now;
+
+  // Enable/disable motor based on car speed
+  bool shouldEnable = fabsf(carSpeed) > 0.1f;
+  if (shouldEnable != motorEnabled)
+  {
+    enableMotor(shouldEnable);
+  }
+
+  // If motor is disabled, don't do any position control
+  if (!motorEnabled)
+  {
+    return;
+  }
 
   // Read actual steering angle from sensor
   float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
@@ -105,8 +140,9 @@ void SteeringMotor::updatePosition()
     stallCounter = 0;
   }
 
-  // Normal drift correction if error exceeds threshold
-  if (fabsf(error) > STEERING_MAX_ALLOWED_ERROR)
+  // Only correct position if we're not at zero speed (let steering drift when stopped)
+  // This prevents holding steering position when the car is stationary
+  if (fabsf(error) > STEERING_MAX_ALLOWED_ERROR && fabsf(carSpeed) > 0.1f)
   {
     driver.XACTUAL(actualSteps);
   }
@@ -323,6 +359,9 @@ void Car::setSpeed(float rpm, float wheelbase, float trackWidth)
   this->trackWidth = trackWidth;
   speed = rpm;
 
+  // Update steering motor with current speed for position control logic
+  steeringMotor.setCarSpeed(speed);
+
   // Apply motor speeds with software differential
   applyMotorSpeeds();
   last_motor_update_ = millis();
@@ -335,5 +374,5 @@ float Car::getRightMotorRPM() const
 
 float Car::getLeftMotorRPM() const
 {
-  return leftMotor.getCurrentRPM();
+  return -leftMotor.getCurrentRPM(); // Reverse sign for published data
 }

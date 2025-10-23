@@ -43,10 +43,14 @@ public:
   uint32_t lastCorrectionMicros = 0;
   float lastExternalAngle = 0.0f;
   int stallCounter = 0;
+  float carSpeed = 0.0f;  // Track car speed for steering control
+  bool motorEnabled = true;  // Track if motor is enabled
   
   SteeringMotor(int cs);
   void begin();
   void setTargetAngle(float angle);
+  void setCarSpeed(float speed);  // Method to update car speed
+  void enableMotor(bool enable);  // Method to enable/disable motor
   float getSteeringAngle();
   void updatePosition();
   float normalizeAngle(float angle);

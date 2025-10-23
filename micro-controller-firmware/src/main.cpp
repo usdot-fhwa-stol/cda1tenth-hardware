@@ -9,7 +9,6 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 
-#include <nav_msgs/msg/odometry.h>
 #include <sensor_msgs/msg/imu.h>
 #include <geometry_msgs/msg/twist.h>
 #include <std_msgs/msg/float32_multi_array.h>
@@ -19,7 +18,6 @@
 
 #include "car.h"
 #include "sensor_manager.h"
-#include "odometry.h"
 #include "debug.h"
 
 #ifndef RCCHECK
@@ -79,7 +77,6 @@ rcl_timer_t kinematics_timer;
 // Global objects
 Car car(CS_RIGHT, CS_LEFT, CS_STEER);
 SensorManager sensor_manager;
-Odometry odometry;
 USBCDC USBSerial;
 
 // State management
@@ -130,10 +127,6 @@ void setup()
 
   // Initialize car
   car.begin();
-
-  // Initialize odometry with robot parameters
-  odometry.initialize(0.3f, 0.2f, 0.05f); // wheelbase, track_width, wheel_radius
-
   USB.begin();
   USBSerial.begin(921600);
 
@@ -488,7 +481,6 @@ void publishData()
   robot_state_msg.right_motor_rpm = car.getRightMotorRPM();
   robot_state_msg.left_motor_rpm = car.getLeftMotorRPM();
 
-  // Set header timestamp (like odometry does)
   struct timespec time_stamp = getTime();
   robot_state_msg.header.stamp.sec = time_stamp.tv_sec;
   robot_state_msg.header.stamp.nanosec = time_stamp.tv_nsec;
