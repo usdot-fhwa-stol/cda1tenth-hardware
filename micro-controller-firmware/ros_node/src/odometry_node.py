@@ -17,7 +17,7 @@ class CarOdometryNode(Node):
         super().__init__('car_odometry_node')
         
         # Declare parameters
-        self.declare_parameter('wheel_radius', 0.03)
+        self.declare_parameter('wheel_radius', 0.0325)
         self.declare_parameter('wheelbase', 0.185)
         self.declare_parameter('track_width', 0.15)
         self.declare_parameter('publish_rate', 50.0)
@@ -57,7 +57,7 @@ class CarOdometryNode(Node):
         self.robot_state_subscription = self.create_subscription(
             RobotState, 'robot_state', self.robot_state_callback, qos_profile)
         
-        # Create timer for odometry publishing
+        # Create timer for odometry publishing (fallback if no data received)
         timer_period = 1.0 / self.publish_rate
         self.timer = self.create_timer(timer_period, self.publish_odometry)
         
@@ -80,6 +80,8 @@ class CarOdometryNode(Node):
     def robot_state_callback(self, msg):
         self.latest_robot_state = msg
         self.robot_state_received = True
+        # Publish odometry immediately when new data arrives
+        self.publish_odometry()
     
     def set_covariance_matrices(self):
         # Position covariance (6x6 matrix)
@@ -106,24 +108,32 @@ class CarOdometryNode(Node):
         current_time = self.get_clock().now()
         dt = (current_time - self.last_time).nanoseconds / 1e9
         
-        if dt <= 0.0:
-            return  # Avoid division by zero
+        if dt <= 0.0 or dt > 1.0:  # Avoid division by zero and large time jumps
+            self.last_time = current_time
+            return
         
         # Calculate velocities from motor data
         right_rpm = self.latest_robot_state.right_motor_rpm
         left_rpm = self.latest_robot_state.left_motor_rpm
         
-        # Convert RPM to linear velocities
+        # Convert RPM to linear velocities (m/s)
         right_velocity = (right_rpm / 60.0) * 2.0 * math.pi * self.wheel_radius
         left_velocity = (left_rpm / 60.0) * 2.0 * math.pi * self.wheel_radius
         
         # Calculate linear and angular velocities
         linear_velocity = (right_velocity + left_velocity) / 2.0
-        angular_velocity = (right_velocity - left_velocity) / self.track_width
         
-        # Alternative: Use IMU for angular velocity (more accurate)
-        if self.robot_state_received:
-            angular_velocity = self.latest_robot_state.gyro_z
+        # Use IMU for angular velocity (more accurate than wheel difference)
+        angular_velocity = self.latest_robot_state.gyro_z
+        
+        # Apply velocity thresholds to prevent drift
+        velocity_threshold = 0.001  # 1 mm/s
+        angular_threshold = 0.001   # ~0.06 degrees/s
+        
+        if abs(linear_velocity) < velocity_threshold:
+            linear_velocity = 0.0
+        if abs(angular_velocity) < angular_threshold:
+            angular_velocity = 0.0
         
         # Update position using integration
         self.x += linear_velocity * math.cos(self.theta) * dt
@@ -171,6 +181,17 @@ class CarOdometryNode(Node):
         
         # Publish transform
         self.publish_transform(current_time)
+        
+        # Debug logging (every 50th message to avoid spam)
+        if hasattr(self, 'debug_counter'):
+            self.debug_counter += 1
+        else:
+            self.debug_counter = 0
+            
+        if self.debug_counter % 50 == 0:
+            self.get_logger().info(f'Odometry: x={self.x:.3f}, y={self.y:.3f}, theta={self.theta:.3f}, '
+                                 f'vx={linear_velocity:.3f}, wz={angular_velocity:.3f}, dt={dt:.3f}, '
+                                 f'RPM: R={right_rpm:.1f}, L={left_rpm:.1f}')
         
         self.last_time = current_time
     
