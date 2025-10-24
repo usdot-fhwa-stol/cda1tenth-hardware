@@ -1,6 +1,6 @@
 # Car Odometry Node
 
-This ROS2 node calculates odometry from robot state data published by the ESP32 firmware using the unified RobotState message format.
+This ROS2 package provides odometry calculation and cmd_vel filtering for car-like robots using the unified RobotState message format.
 
 ## Quick Start
 
@@ -18,14 +18,21 @@ cd ../ros_node
 colcon build --packages-select car_odometry
 source install/setup.bash
 
-# 4. Run the node
+# 4. Run the nodes
 ros2 run car_odometry odometry_node.py
+ros2 run car_odometry cmd_vel_filter.py
+
+# Or launch both together
+ros2 launch car_odometry car_system.launch.py
 ```
 
 **⚠️ Important**: Always build `robot_state_msgs` before `car_odometry` to avoid build errors.
 
 ## Overview
 
+This package provides two main nodes:
+
+### Odometry Node
 The odometry node subscribes to:
 - `/robot_state` - Unified robot state message containing IMU and motor data
 
@@ -33,6 +40,13 @@ And publishes:
 - `/odom` - Standard ROS2 odometry message
 - `/odom_twist` - Twist message for debugging
 - TF transforms from `odom` to `base_link`
+
+### CmdVel Filter Node
+The cmd_vel filter node subscribes to:
+- `/cmd_vel` - Input velocity commands
+
+And publishes:
+- `/cmd_vel_filtered` - Filtered velocity commands at constant rate
 
 ## RobotState Message Integration
 
@@ -53,11 +67,21 @@ The RobotState message contains:
 
 ## Features
 
+### Odometry Node
 - **Dual odometry calculation**: Uses both wheel encoders and IMU data
 - **Configurable parameters**: Wheel radius, wheelbase, track width
 - **Covariance estimation**: Proper uncertainty modeling
 - **TF broadcasting**: Standard ROS2 transform tree
+
+### CmdVel Filter Node
+- **Constant rate publishing**: Maintains consistent 20Hz output regardless of input frequency
+- **Zero velocity fallback**: Publishes zero velocities when no input received
+- **Configurable rate**: Adjustable publish rate via parameters
+- **Smooth operation**: Prevents motor stuttering from irregular cmd_vel messages
+
+### General
 - **Python implementation**: Clean, maintainable Python code
+- **Unified message format**: Uses RobotState message for synchronized sensor data
 
 ## Installation
 
@@ -101,21 +125,32 @@ source install/setup.bash
 ### Basic Usage
 
 ```bash
-# Run the Python odometry node
+# Run individual nodes
 ros2 run car_odometry odometry_node.py
+ros2 run car_odometry cmd_vel_filter.py
+
+# Or run both together
+ros2 launch car_odometry car_system.launch.py
 ```
 
 ### With Launch File
 
 ```bash
-# Launch with default parameters
+# Launch odometry node only
 ros2 launch car_odometry car_odometry.launch.py
 
+# Launch cmd_vel filter only
+ros2 launch car_odometry cmd_vel_filter.launch.py
+
+# Launch both nodes together
+ros2 launch car_odometry car_system.launch.py
+
 # Launch with custom parameters
-ros2 launch car_odometry car_odometry.launch.py \
-    wheel_radius:=0.03 \
+ros2 launch car_odometry car_system.launch.py \
+    wheel_radius:=0.0325 \
     wheelbase:=0.185 \
-    track_width:=0.15
+    track_width:=0.15 \
+    cmd_vel_filter_rate:=20.0
 
 # Test with robot state messages
 ros2 launch car_odometry test_robot_state_odometry.launch.py
@@ -144,11 +179,13 @@ ros2 run car_odometry odometry_node --ros-args --params-file config/car_params.y
 ### Subscribed Topics
 
 - `/robot_state` (robot_state_msgs/RobotState): Unified robot state message containing IMU and motor data
+- `/cmd_vel` (geometry_msgs/Twist): Input velocity commands (for cmd_vel_filter)
 
 ### Published Topics
 
 - `/odom` (nav_msgs/Odometry): Calculated odometry
 - `/odom_twist` (geometry_msgs/Twist): Linear and angular velocities
+- `/cmd_vel_filtered` (geometry_msgs/Twist): Filtered velocity commands at constant rate
 - TF transforms: `odom` → `base_link`
 
 ## Odometry Calculation
@@ -209,21 +246,24 @@ ros2 run rviz2 rviz2 -d config/odometry.rviz
 
 ### Test Scripts
 
-The package includes test scripts to verify the RobotState integration:
+The package includes test scripts to verify both odometry and cmd_vel filter functionality:
 
 ```bash
-# Run the test script that publishes mock RobotState messages
+# Test odometry with RobotState messages
 ros2 run car_odometry test_robot_state_odometry.py
-
-# Or use the test launch file
 ros2 launch car_odometry test_robot_state_odometry.launch.py
+
+# Test cmd_vel filter
+ros2 run car_odometry test_cmd_vel_filter.py
 ```
 
-The test script verifies that:
+The test scripts verify that:
 - Odometry messages are published correctly
 - Twist messages are published correctly
 - Position and orientation calculations are working
 - Motor RPM data is properly converted to velocities
+- CmdVel filter maintains constant publish rate
+- CmdVel filter handles missing input gracefully
 
 ### Topic Mapping
 

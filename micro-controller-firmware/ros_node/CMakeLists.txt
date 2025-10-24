@@ -24,8 +24,10 @@ find_package(robot_state_msgs REQUIRED)
 # Install Python scripts
 install(PROGRAMS
   src/odometry_node.py
+  src/cmd_vel_filter.py
   scripts/test_odometry.py
   scripts/test_robot_state_odometry.py
+  scripts/test_cmd_vel_filter.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
