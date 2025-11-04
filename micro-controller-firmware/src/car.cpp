@@ -6,40 +6,45 @@ SteeringMotor::SteeringMotor(int cs) : driver(cs, R_SENSE), cs_pin(cs) {}
 
 void SteeringMotor::begin()
 {
-  // Pin setup
   pinMode(cs_pin, OUTPUT);
   digitalWrite(cs_pin, HIGH);
 
-  // Driver initialization
   driver.begin();
   driver.microsteps(MICROSTEPS);
-  driver.RAMPMODE(0); // Positioning mode
+  driver.RAMPMODE(0);
 
-  // Current settings
-  driver.rms_current(300);
-  driver.ihold(5);
-  driver.irun(50);
+  driver.rms_current(200);
+  driver.ihold(3);
+  driver.irun(15);
   driver.iholddelay(5);
 
-  // PWM settings
-  driver.en_pwm_mode(false);
+  driver.en_pwm_mode(true);
   driver.pwm_autoscale(true);
-  driver.toff(3);
+  driver.toff(4);
   driver.blank_time(24);
+  driver.TCOOLTHRS(0xFFFFF);
+  driver.THIGH(0);
+  driver.semin(5);
+  driver.semax(2);
+  driver.sedn(0b01);
+  driver.VDCMIN(0);
 
-  // Motion profile
-  driver.a1(500);
-  driver.v1(500);
-  driver.AMAX(5000);
-  driver.DMAX(5000);
-  driver.VMAX(8000);
-  driver.d1(500);
+  driver.pwm_freq(1);
+  driver.pwm_grad(1);
+  driver.pwm_ofs(247);
+
+  driver.a1(1000);
+  driver.v1(1000);
+  driver.AMAX(2000);
+  driver.DMAX(2000);
+  driver.VMAX(3000);
+  driver.d1(1000);
   driver.VSTOP(10);
 
   lastCorrectionMicros = micros();
 }
 
-float SteeringMotor::normalizeAngle(float angle)
+float SteeringMotor::normalizeAngle(float angle) const
 {
   while (angle > 180.0f)
     angle -= DEGREES_PER_REVOLUTION;
@@ -48,31 +53,27 @@ float SteeringMotor::normalizeAngle(float angle)
   return angle;
 }
 
-float SteeringMotor::getSteeringAngle()
+float SteeringMotor::getSteeringAngle() const
 {
   int raw = analogRead(STEERING_SENSOR_PIN);
-  float angle = ((float)raw / STEERING_SENSOR_MAX_VALUE) * DEGREES_PER_REVOLUTION; // Map to 0 to 360 degrees
+  float angle = ((float)raw / STEERING_SENSOR_MAX_VALUE) * DEGREES_PER_REVOLUTION;
   return angle;
 }
 
 void SteeringMotor::setTargetAngle(float angle)
 {
-  // Only update if the target has actually changed
   float newTargetAngle = normalizeAngle(-angle);
   if (fabsf(newTargetAngle - targetAngle) < 0.1f)
   {
-    return; // Target hasn't changed significantly, skip update
+    return;
   }
 
   targetAngle = newTargetAngle;
 
-  // Use external position control instead of internal TMC5160 control
-  // This gives us more precise control over the steering behavior
   float stepsPerRev = MOTOR_STEPS * MICROSTEPS;
   float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
   float currentSteps = (currentAngle / DEGREES_PER_REVOLUTION) * stepsPerRev * STEERING_GEAR_RATIO;
 
-  // Set current position as actual to avoid conflicts
   driver.XACTUAL((int32_t)currentSteps);
 }
 
@@ -86,43 +87,39 @@ void SteeringMotor::enableMotor(bool enable)
   motorEnabled = enable;
   if (enable)
   {
-    // Re-enable motor with hold current
     driver.ihold(5);
     driver.irun(50);
   }
   else
   {
-    // Disable motor by setting hold current to 0
     driver.ihold(0);
     driver.irun(0);
   }
 }
 
+void SteeringMotor::setEncoderOffset(float offset)
+{
+  angleOffset = offset;
+}
+
 void SteeringMotor::updatePosition()
 {
   uint32_t now = micros();
-  if (now - lastCorrectionMicros < STEERING_CORRECTION_INTERVAL)
-    return;
-  lastCorrectionMicros = now;
 
-  // Enable/disable motor based on car speed
   bool shouldEnable = fabsf(carSpeed) > 0.1f;
   if (shouldEnable != motorEnabled)
   {
     enableMotor(shouldEnable);
   }
 
-  // If motor is disabled, don't do any position control
   if (!motorEnabled)
   {
     return;
   }
 
-  // Read actual steering angle from sensor
   float currentAngle = normalizeAngle(getSteeringAngle() - angleOffset);
   float error = normalizeAngle(targetAngle - currentAngle);
 
-  // Stall detection: if angle hasn't changed much, increment counter
   if (fabsf(currentAngle - lastExternalAngle) < SMALL_MOVEMENT_THRESHOLD)
   {
     stallCounter++;
@@ -137,34 +134,29 @@ void SteeringMotor::updatePosition()
   int32_t currentSteps = (int32_t)((currentAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
   int32_t targetSteps = (int32_t)((targetAngle / 360.0f) * stepsPerRev * STEERING_GEAR_RATIO);
 
-  // If we've stalled, resync the position
   if (stallCounter > STALL_DETECTION_COUNT)
   {
     driver.XACTUAL(currentSteps);
     stallCounter = 0;
   }
 
-  // Use proportional control for smooth steering correction
-  // Only correct if error is significant and car is moving
   if (fabsf(error) > STEERING_MAX_ALLOWED_ERROR && fabsf(carSpeed) > 0.1f)
   {
-    // Calculate proportional correction (limit to prevent overcorrection)
-    float maxCorrectionSteps = 100.0f; // Limit correction to prevent sudden jumps
+    float maxCorrectionSteps = 200.0f;
     int32_t correctionSteps = (int32_t)(error * stepsPerRev * STEERING_GEAR_RATIO / 360.0f);
 
-    // Limit correction magnitude
+    correctionSteps = (int32_t)(correctionSteps * 1.5f);
+
     if (correctionSteps > maxCorrectionSteps)
       correctionSteps = maxCorrectionSteps;
     else if (correctionSteps < -maxCorrectionSteps)
       correctionSteps = -maxCorrectionSteps;
 
-    // Apply proportional correction
     int32_t newTargetSteps = currentSteps + correctionSteps;
     driver.XTARGET(newTargetSteps);
   }
   else
   {
-    // If error is small, just maintain current position
     driver.XTARGET(currentSteps);
   }
 }
@@ -173,28 +165,24 @@ DriveMotor::DriveMotor(int cs) : driver(cs, R_SENSE), cs_pin(cs) {}
 
 void DriveMotor::begin()
 {
-  // Pin setup
   pinMode(cs_pin, OUTPUT);
   pinMode(EN_PIN, OUTPUT);
   digitalWrite(EN_PIN, LOW);
 
-  // Driver initialization
   driver.begin();
   driver.microsteps(MICROSTEPS);
-  driver.RAMPMODE(2); // Velocity mode
+  driver.RAMPMODE(2);
   driver.shaft(true);
   driver.X_ENC(0);
 
-  // Current settings
-  driver.rms_current(1000);
-  driver.ihold(10);
-  driver.irun(31);
+  driver.rms_current(600);
+  driver.ihold(5);
+  driver.irun(20);
   driver.iholddelay(5);
 
-  // PWM and stealthChop settings
   driver.en_pwm_mode(true);
   driver.pwm_autoscale(true);
-  driver.toff(3);
+  driver.toff(4);
   driver.blank_time(24);
   driver.TCOOLTHRS(0xFFFFF);
   driver.THIGH(0);
@@ -203,7 +191,10 @@ void DriveMotor::begin()
   driver.sedn(0b01);
   driver.VDCMIN(0);
 
-  // Motion profile
+  driver.pwm_freq(1);
+  driver.pwm_grad(1);
+  driver.pwm_ofs(247);
+
   driver.a1(1000);
   driver.v1(1000);
   driver.AMAX(1000);
@@ -211,18 +202,16 @@ void DriveMotor::begin()
   driver.d1(1000);
   driver.VSTOP(10);
 
-  // Initialize RPM calculation variables
   last_time = micros();
   last_enc = driver.X_ENC();
   current_rpm = 0.0f;
 }
 
-// Simple driver reset function
 void resetDriver(TMC5160Stepper &drv, int ENN_PIN)
 {
   digitalWrite(ENN_PIN, HIGH);
   delayMicroseconds(100);
-  drv.GSTAT(0b111); // Clear faults
+  drv.GSTAT(0b111);
   digitalWrite(ENN_PIN, LOW);
 }
 
@@ -234,7 +223,6 @@ void DriveMotor::setSpeed(float rpm)
 
 void DriveMotor::updateControlLoop()
 {
-  // Simple fault check and reset
   if (driver.GSTAT() & (1 << 2))
   {
     resetDriver(driver, EN_PIN);
@@ -245,14 +233,12 @@ void DriveMotor::updateControlLoop()
   uint32_t dt = now - last_time;
   int32_t delta_enc = current_enc - last_enc;
 
-  // Calculate RPM if we have valid timing data
   if (dt > 0 && last_time > 0)
   {
     float measured_ticks_per_sec = (float)delta_enc * 1e6f / dt;
     float measured_steps_per_sec = measured_ticks_per_sec * ((float)(MOTOR_STEPS * MICROSTEPS) / (float)ENCODER_TICKS_PER_REVOLUTION);
     current_rpm = (measured_steps_per_sec / (float)(MOTOR_STEPS * MICROSTEPS)) * 60.0f;
 
-    // Apply direction
     if (target_rpm < 0.0f && current_rpm > 0.0f)
     {
       current_rpm = -current_rpm;
@@ -263,7 +249,6 @@ void DriveMotor::updateControlLoop()
     current_rpm = 0.0f;
   }
 
-  // Update motor speed if changed
   if (step_rate_cmd != target_steps_per_sec)
   {
     step_rate_cmd = target_steps_per_sec;
@@ -290,40 +275,29 @@ Car::Car(int rightCS, int leftCS, int steerCS)
 
 void Car::applyMotorSpeeds()
 {
-  // Software differential for front-wheel steering car
-  // When turning, the inner wheel should slow down and outer wheel should speed up
-  const float steeringAngleRad = steeringAngle * (M_PI / 180.0f);
-  constexpr float minTurnAngle = 0.01f; // radians
+  float directionAwareSteeringAngle = (speed >= 0) ? steeringAngle : -steeringAngle;
+  const float steeringAngleRad = directionAwareSteeringAngle * (M_PI / 180.0f);
+  constexpr float minTurnAngle = 0.01f;
 
   if (fabsf(steeringAngleRad) < minTurnAngle)
   {
-    // Straight line - both motors same speed
     rightMotor.setSpeed(speed);
     leftMotor.setSpeed(-speed);
   }
   else
   {
-    // Calculate differential speeds based on turning radius
-    // For a turn, the inner wheel travels a shorter distance than the outer wheel
     float turning_radius = wheelbase / tanf(fabsf(steeringAngleRad));
-
-    // Calculate the radius for each rear wheel
     float inner_radius = turning_radius - (trackWidth / 2.0f);
     float outer_radius = turning_radius + (trackWidth / 2.0f);
-
-    // Calculate speed ratio (inner wheel should be slower)
     float speed_ratio = inner_radius / outer_radius;
 
-    // Apply differential speeds
-    if (steeringAngleRad > 0) // Turning left
+    if (steeringAngleRad > 0)
     {
-      // Left wheel is inner (slower), right wheel is outer (faster)
       rightMotor.setSpeed(speed);
       leftMotor.setSpeed(-speed * speed_ratio);
     }
-    else // Turning right
+    else
     {
-      // Right wheel is inner (slower), left wheel is outer (faster)
       rightMotor.setSpeed(speed * speed_ratio);
       leftMotor.setSpeed(-speed);
     }
@@ -332,24 +306,21 @@ void Car::applyMotorSpeeds()
 
 bool Car::isDriverHealthy()
 {
-  // Simple timeout check - if no motor updates in 1 second, consider unhealthy
   return (millis() - last_motor_update_) < 1000;
 }
 
 void Car::emergencyStop()
 {
-  // Immediate stop
   speed = 0.0f;
   steeringAngle = 0.0f;
   rightMotor.setSpeed(0.0f);
   leftMotor.setSpeed(0.0f);
   steeringMotor.setTargetAngle(0.0f);
-  last_motor_update_ = millis(); // Reset health timer
+  last_motor_update_ = millis();
 }
 
 void Car::updateControlLoops()
 {
-  // Update motor control loops directly
   rightMotor.updateControlLoop();
   leftMotor.updateControlLoop();
   steeringMotor.updatePosition();
@@ -358,16 +329,15 @@ void Car::updateControlLoops()
 void Car::begin()
 {
   rightMotor.begin();
-  delay(100); // Allow time for driver initialization
+  delay(100);
   leftMotor.begin();
-  delay(100); // Allow time for driver initialization
+  delay(100);
   steeringMotor.begin();
-  delay(100); // Allow time for driver initialization
+  delay(100);
 }
 
 void Car::setSteeringAngle(float angle)
 {
-  // Direct control - bypass queue for immediate response
   steeringAngle = angle;
   steeringMotor.setTargetAngle(angle);
   last_steering_update_ = millis();
@@ -375,15 +345,11 @@ void Car::setSteeringAngle(float angle)
 
 void Car::setSpeed(float rpm, float wheelbase, float trackWidth)
 {
-  // Store geometry parameters
   this->wheelbase = wheelbase;
   this->trackWidth = trackWidth;
   speed = rpm;
 
-  // Update steering motor with current speed for position control logic
   steeringMotor.setCarSpeed(speed);
-
-  // Apply motor speeds with software differential
   applyMotorSpeeds();
   last_motor_update_ = millis();
 }
@@ -395,5 +361,12 @@ float Car::getRightMotorRPM() const
 
 float Car::getLeftMotorRPM() const
 {
-  return -leftMotor.getCurrentRPM(); // Reverse sign for published data
+  return -leftMotor.getCurrentRPM();
+}
+
+float Car::getActualSteeringAngle() const
+{
+  float rawAngle = steeringMotor.getSteeringAngle();
+  float actualAngle = steeringMotor.normalizeAngle(rawAngle - steeringMotor.angleOffset);
+  return actualAngle;
 }

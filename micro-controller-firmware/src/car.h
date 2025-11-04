@@ -26,13 +26,11 @@
 #define DEGREES_PER_REVOLUTION 360.0f
 
 // Steering control parameters
-#define STEERING_CORRECTION_INTERVAL 20000  // 20 ms for smoother steering
-#define STEERING_GEAR_RATIO (55.0f/12.0f) // ≈ 4.5833
-#define STEERING_MAX_ALLOWED_ERROR 2.0f  // Reduced from 5.0f for more precise control
-#define STALL_DETECTION_COUNT 10  // Increased for more stable stall detection
-#define SMALL_MOVEMENT_THRESHOLD 0.3f // degrees - reduced for more sensitive detection
-
-// Drive motor control parameters
+#define STEERING_CORRECTION_INTERVAL 10000
+#define STEERING_GEAR_RATIO (55.0f/12.0f)
+#define STEERING_MAX_ALLOWED_ERROR 1.5f
+#define STALL_DETECTION_COUNT 8
+#define SMALL_MOVEMENT_THRESHOLD 0.2f
 
 class SteeringMotor {
 public:
@@ -43,17 +41,18 @@ public:
   uint32_t lastCorrectionMicros = 0;
   float lastExternalAngle = 0.0f;
   int stallCounter = 0;
-  float carSpeed = 0.0f;  // Track car speed for steering control
-  bool motorEnabled = true;  // Track if motor is enabled
+  float carSpeed = 0.0f;
+  bool motorEnabled = true;
   
   SteeringMotor(int cs);
   void begin();
   void setTargetAngle(float angle);
-  void setCarSpeed(float speed);  // Method to update car speed
-  void enableMotor(bool enable);  // Method to enable/disable motor
-  float getSteeringAngle();
+  void setCarSpeed(float speed);
+  void enableMotor(bool enable);
+  void setEncoderOffset(float offset);
+  float getSteeringAngle() const;
   void updatePosition();
-  float normalizeAngle(float angle);
+  float normalizeAngle(float angle) const;
 };
 
 class DriveMotor {
@@ -87,8 +86,8 @@ class Car {
 public:
   float speed = 0.0f;
   float steeringAngle = 0.0f;
-  float wheelbase = 0.185f;  // Default wheelbase
-  float trackWidth = 0.15f;  // Default track width
+  float wheelbase = 0.185f;
+  float trackWidth = 0.15f;
   DriveMotor rightMotor;
   DriveMotor leftMotor;
   SteeringMotor steeringMotor;
@@ -100,20 +99,16 @@ public:
   void setSpeed(float rpm, float wheelbase, float trackWidth);
   float getRightMotorRPM() const;
   float getLeftMotorRPM() const;
-  
-  
-  // Timeout and error handling
+  float getActualSteeringAngle() const;
+
   bool isDriverHealthy();
   void emergencyStop();
-  
 
 private:
-  // Timeout tracking
   uint32_t last_motor_update_ = 0;
   uint32_t last_steering_update_ = 0;
   bool driver_healthy_ = true;
-  
-  // Helper functions
+
   void applyMotorSpeeds();
 };
 
