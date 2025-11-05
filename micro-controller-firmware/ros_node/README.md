@@ -163,9 +163,6 @@ ros2 launch car_odometry car_system.launch.py \
     wheelbase:=0.185 \
     track_width:=0.15 \
     cmd_vel_filter_rate:=20.0
-
-# Test with robot state messages
-ros2 launch car_odometry test_robot_state_odometry.launch.py
 ```
 
 ### With Configuration File
@@ -266,20 +263,27 @@ ros2 run rviz2 rviz2 -d config/odometry.rviz
 
 ## Testing
 
-### Test Scripts
+### Manual Testing
 
-The package includes test scripts to verify both odometry and cmd_vel filter functionality:
+You can manually test the odometry and cmd_vel filter functionality using ROS2 command-line tools:
 
 ```bash
-# Test odometry with CarState messages
-ros2 run car_odometry test_robot_state_odometry.py
-ros2 launch car_odometry test_robot_state_odometry.launch.py
+# Test odometry by monitoring topics
+ros2 topic echo /car/car_state
+ros2 topic echo /car/odom
+ros2 topic echo /car/odom_twist
 
 # Test cmd_vel filter
-ros2 run car_odometry test_cmd_vel_filter.py
+ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.2}}"
+ros2 topic echo /cmd_vel_filtered
+
+# Verify message rates
+ros2 topic hz /car/car_state
+ros2 topic hz /car/odom
+ros2 topic hz /cmd_vel_filtered
 ```
 
-The test scripts verify that:
+You can verify that:
 - Odometry messages are published correctly
 - Twist messages are published correctly
 - Position and orientation calculations are working
