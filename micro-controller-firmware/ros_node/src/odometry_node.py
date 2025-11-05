@@ -3,6 +3,7 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from rcl_interfaces.msg import SetParametersResult
 from car_state_msg.msg import CarState
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist, TransformStamped, Pose
@@ -121,91 +122,97 @@ class CarOdometryNode(Node):
 
     def parameter_change_callback(self, params):
         """Handle parameter changes at runtime"""
-        result = []
         for param in params:
             param_name = param.name
             param_value = param.value
 
-            # Update cached parameter values
-            if param_name == "wheel_radius":
-                self.wheel_radius = float(param_value)
-                self.get_logger().info(
-                    f"Updated wheel_radius to {self.wheel_radius:.3f} m"
+            try:
+                # Update cached parameter values
+                if param_name == "wheel_radius":
+                    self.wheel_radius = float(param_value)
+                    self.get_logger().info(
+                        f"Updated wheel_radius to {self.wheel_radius:.3f} m"
+                    )
+                elif param_name == "wheelbase":
+                    self.wheelbase = float(param_value)
+                    self.get_logger().info(
+                        f"Updated wheelbase to {self.wheelbase:.3f} m"
+                    )
+                elif param_name == "track_width":
+                    self.track_width = float(param_value)
+                    self.get_logger().info(
+                        f"Updated track_width to {self.track_width:.3f} m"
+                    )
+                elif param_name == "encoder_offset":
+                    self.encoder_offset = float(param_value)
+                    self.get_logger().info(
+                        f"Updated encoder_offset to {self.encoder_offset:.1f} deg"
+                    )
+                elif param_name == "max_steering_angle":
+                    self.max_steering_angle = float(param_value)
+                    self.get_logger().info(
+                        f"Updated max_steering_angle to {self.max_steering_angle:.1f} deg"
+                    )
+                elif param_name == "max_rpm":
+                    self.max_rpm = float(param_value)
+                    self.get_logger().info(f"Updated max_rpm to {self.max_rpm:.1f}")
+                elif param_name == "velocity_threshold":
+                    self.velocity_threshold = float(param_value)
+                    self.get_logger().info(
+                        f"Updated velocity_threshold to {self.velocity_threshold:.6f} m/s"
+                    )
+                elif param_name == "angular_threshold":
+                    self.angular_threshold = float(param_value)
+                    self.get_logger().info(
+                        f"Updated angular_threshold to {self.angular_threshold:.6f} rad/s"
+                    )
+                elif param_name == "publish_rate":
+                    old_rate = self.publish_rate
+                    new_rate = float(param_value)
+                    if new_rate <= 0:
+                        return SetParametersResult(
+                            successful=False,
+                            reason="publish_rate must be greater than 0",
+                        )
+                    self.publish_rate = new_rate
+                    # Update timer period if publish_rate changes
+                    timer_period = 1.0 / self.publish_rate
+                    self.timer.cancel()
+                    self.timer = self.create_timer(timer_period, self.publish_odometry)
+                    self.get_logger().info(
+                        f"Updated publish_rate from {old_rate:.1f} to {self.publish_rate:.1f} Hz"
+                    )
+                elif param_name == "frame_id":
+                    self.frame_id = str(param_value)
+                    self.odom_msg.header.frame_id = self.frame_id
+                    self.get_logger().info(f"Updated frame_id to {self.frame_id}")
+                elif param_name == "child_frame_id":
+                    self.child_frame_id = str(param_value)
+                    self.odom_msg.child_frame_id = self.child_frame_id
+                    self.get_logger().info(
+                        f"Updated child_frame_id to {self.child_frame_id}"
+                    )
+                elif param_name == "debug_log_frequency":
+                    self.debug_log_frequency = int(param_value)
+                    self.get_logger().info(
+                        f"Updated debug_log_frequency to {self.debug_log_frequency}"
+                    )
+                else:
+                    # Unknown parameter, reject it
+                    self.get_logger().warn(f"Unknown parameter: {param_name}")
+                    return SetParametersResult(
+                        successful=False, reason=f"Unknown parameter: {param_name}"
+                    )
+            except (ValueError, TypeError) as e:
+                self.get_logger().error(
+                    f"Invalid value for parameter {param_name}: {e}"
                 )
-                result.append(param)
-            elif param_name == "wheelbase":
-                self.wheelbase = float(param_value)
-                self.get_logger().info(f"Updated wheelbase to {self.wheelbase:.3f} m")
-                result.append(param)
-            elif param_name == "track_width":
-                self.track_width = float(param_value)
-                self.get_logger().info(
-                    f"Updated track_width to {self.track_width:.3f} m"
+                return SetParametersResult(
+                    successful=False, reason=f"Invalid value: {e}"
                 )
-                result.append(param)
-            elif param_name == "encoder_offset":
-                self.encoder_offset = float(param_value)
-                self.get_logger().info(
-                    f"Updated encoder_offset to {self.encoder_offset:.1f} deg"
-                )
-                result.append(param)
-            elif param_name == "max_steering_angle":
-                self.max_steering_angle = float(param_value)
-                self.get_logger().info(
-                    f"Updated max_steering_angle to {self.max_steering_angle:.1f} deg"
-                )
-                result.append(param)
-            elif param_name == "max_rpm":
-                self.max_rpm = float(param_value)
-                self.get_logger().info(f"Updated max_rpm to {self.max_rpm:.1f}")
-                result.append(param)
-            elif param_name == "velocity_threshold":
-                self.velocity_threshold = float(param_value)
-                self.get_logger().info(
-                    f"Updated velocity_threshold to {self.velocity_threshold:.6f} m/s"
-                )
-                result.append(param)
-            elif param_name == "angular_threshold":
-                self.angular_threshold = float(param_value)
-                self.get_logger().info(
-                    f"Updated angular_threshold to {self.angular_threshold:.6f} rad/s"
-                )
-                result.append(param)
-            elif param_name == "publish_rate":
-                old_rate = self.publish_rate
-                self.publish_rate = float(param_value)
-                # Update timer period if publish_rate changes
-                timer_period = 1.0 / self.publish_rate if self.publish_rate > 0 else 1.0
-                self.timer.cancel()
-                self.timer = self.create_timer(timer_period, self.publish_odometry)
-                self.get_logger().info(
-                    f"Updated publish_rate from {old_rate:.1f} to {self.publish_rate:.1f} Hz"
-                )
-                result.append(param)
-            elif param_name == "frame_id":
-                self.frame_id = str(param_value)
-                self.odom_msg.header.frame_id = self.frame_id
-                self.get_logger().info(f"Updated frame_id to {self.frame_id}")
-                result.append(param)
-            elif param_name == "child_frame_id":
-                self.child_frame_id = str(param_value)
-                self.odom_msg.child_frame_id = self.child_frame_id
-                self.get_logger().info(
-                    f"Updated child_frame_id to {self.child_frame_id}"
-                )
-                result.append(param)
-            elif param_name == "debug_log_frequency":
-                self.debug_log_frequency = int(param_value)
-                self.get_logger().info(
-                    f"Updated debug_log_frequency to {self.debug_log_frequency}"
-                )
-                result.append(param)
-            else:
-                # Unknown parameter, reject it
-                self.get_logger().warn(f"Unknown parameter: {param_name}")
-                result.append(param)
 
-        return result
+        # All parameters processed successfully
+        return SetParametersResult(successful=True)
 
     def car_state_callback(self, msg):
         self.latest_car_state = msg
