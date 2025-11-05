@@ -18,7 +18,8 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
-  <depend>robot_state_msgs</depend>
+  <depend>car_state_msg</depend>
+  <depend>car_config_msg</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

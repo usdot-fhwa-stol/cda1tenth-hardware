@@ -8,7 +8,6 @@
 #include <rcl/error_handling.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
-#include <rclc_parameter/rclc_parameter.h>
 
 #include <sensor_msgs/msg/imu.h>
 #include <geometry_msgs/msg/twist.h>
@@ -16,7 +15,8 @@
 #include <string.h>
 #include <geometry_msgs/msg/vector3.h>
 #include <std_msgs/msg/header.h>
-#include <robot_state_msgs/msg/robot_state.h>
+#include <car_state_msg/msg/car_state.h>
+#include <car_config_msg/msg/car_config.h>
 
 #include "car.h"
 #include "sensor_manager.h"
@@ -72,17 +72,16 @@
 #define DEBUG_ARRAY_LEFT_MOTOR_RPM_IDX 15
 
 // ROS Publishers and Subscribers
-rcl_publisher_t robot_state_publisher;
+rcl_publisher_t car_state_publisher;
 rcl_publisher_t debug_publisher;
 rcl_subscription_t twist_subscriber;
-
-// Parameter server
-rclc_parameter_server_t param_server;
+rcl_subscription_t car_config_subscriber;
 
 // ROS Messages
-robot_state_msgs__msg__RobotState robot_state_msg;
+car_state_msg__msg__CarState car_state_msg;
 std_msgs__msg__Float32MultiArray debug_msg;
 geometry_msgs__msg__Twist twist_msg;
+car_config_msg__msg__CarConfig car_config_msg;
 
 // ROS Infrastructure
 rclc_executor_t executor;
@@ -102,9 +101,10 @@ USBCDC USBSerial;
 unsigned long long time_offset = 0;
 unsigned long prev_cmd_time = 0;
 
-// Runtime parameters (updated from parameter server)
+// Runtime parameters (updated from car_config message)
 float max_steering_angle = MAX_STEERING_ANGLE_DEG;
 float max_rpm = MAX_RPM;
+float wheel_radius = WHEEL_RADIUS_M;
 
 enum states
 {
@@ -127,7 +127,7 @@ void controlCallback(rcl_timer_t *timer, int64_t last_call_time);
 void debugCallback(rcl_timer_t *timer, int64_t last_call_time);
 void kinematicsCallback(rcl_timer_t *timer, int64_t last_call_time);
 void twistCallback(const void *msgin);
-bool onParameterChanged(const Parameter *old_param, const Parameter *new_param, void *context);
+void carConfigCallback(const void *msgin);
 
 // Data arrays for multi-array messages
 float debug_data_array[20];
@@ -160,9 +160,10 @@ void setup()
   set_microros_serial_transports(USBSerial);
   flashLED(6);
 
-  robot_state_msgs__msg__RobotState__init(&robot_state_msg);
+  car_state_msg__msg__CarState__init(&car_state_msg);
   std_msgs__msg__Float32MultiArray__init(&debug_msg);
   geometry_msgs__msg__Twist__init(&twist_msg);
+  car_config_msg__msg__CarConfig__init(&car_config_msg);
 
   debug_msg.data.data = debug_data_array;
   debug_msg.data.capacity = 20;
@@ -306,91 +307,6 @@ void twistCallback(const void *msgin)
   prev_cmd_time = millis();
 }
 
-bool onParameterChanged(const Parameter *old_param, const Parameter *new_param, void *context)
-{
-  (void)context;
-
-  if (old_param == NULL && new_param == NULL)
-  {
-    return false;
-  }
-
-  if (old_param == NULL)
-  {
-    if (new_param != NULL)
-    {
-      if (strcmp(new_param->name.data, "encoder_offset") == 0)
-      {
-        car.steeringMotor.setEncoderOffset((float)new_param->value.double_value);
-      }
-      else if (strcmp(new_param->name.data, "wheelbase") == 0)
-      {
-        car.wheelbase = (float)new_param->value.double_value;
-      }
-      else if (strcmp(new_param->name.data, "track_width") == 0)
-      {
-        car.trackWidth = (float)new_param->value.double_value;
-      }
-      else if (strcmp(new_param->name.data, "max_steering_angle") == 0)
-      {
-        max_steering_angle = (float)new_param->value.double_value;
-      }
-      else if (strcmp(new_param->name.data, "max_rpm") == 0)
-      {
-        max_rpm = (float)new_param->value.double_value;
-      }
-    }
-  }
-  else if (new_param == NULL)
-  {
-    if (strcmp(old_param->name.data, "encoder_offset") == 0)
-    {
-      car.steeringMotor.setEncoderOffset(DEFAULT_ENCODER_OFFSET);
-    }
-    else if (strcmp(old_param->name.data, "wheelbase") == 0)
-    {
-      car.wheelbase = DEFAULT_WHEELBASE;
-    }
-    else if (strcmp(old_param->name.data, "track_width") == 0)
-    {
-      car.trackWidth = DEFAULT_TRACK_WIDTH;
-    }
-    else if (strcmp(old_param->name.data, "max_steering_angle") == 0)
-    {
-      max_steering_angle = MAX_STEERING_ANGLE_DEG;
-    }
-    else if (strcmp(old_param->name.data, "max_rpm") == 0)
-    {
-      max_rpm = MAX_RPM;
-    }
-  }
-  else
-  {
-    if (strcmp(new_param->name.data, "encoder_offset") == 0)
-    {
-      car.steeringMotor.setEncoderOffset((float)new_param->value.double_value);
-    }
-    else if (strcmp(new_param->name.data, "wheelbase") == 0)
-    {
-      car.wheelbase = (float)new_param->value.double_value;
-    }
-    else if (strcmp(new_param->name.data, "track_width") == 0)
-    {
-      car.trackWidth = (float)new_param->value.double_value;
-    }
-    else if (strcmp(new_param->name.data, "max_steering_angle") == 0)
-    {
-      max_steering_angle = (float)new_param->value.double_value;
-    }
-    else if (strcmp(new_param->name.data, "max_rpm") == 0)
-    {
-      max_rpm = (float)new_param->value.double_value;
-    }
-  }
-
-  return true;
-}
-
 bool createEntities()
 {
   allocator = rcl_get_default_allocator();
@@ -399,16 +315,16 @@ bool createEntities()
   RCCHECK(rclc_node_init_default(&node, "car_controller", "", &support));
 
   RCCHECK(rclc_publisher_init_best_effort(
-      &robot_state_publisher,
+      &car_state_publisher,
       &node,
-      ROSIDL_GET_MSG_TYPE_SUPPORT(robot_state_msgs, msg, RobotState),
-      "car_controller/robot_state"));
+      ROSIDL_GET_MSG_TYPE_SUPPORT(car_state_msg, msg, CarState),
+      "car/car_state"));
 
   RCCHECK(rclc_publisher_init_best_effort(
       &debug_publisher,
       &node,
       ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-      "car_controller/debug_data"));
+      "car/debug_data"));
 
   RCCHECK(rclc_subscription_init_best_effort(
       &twist_subscriber,
@@ -416,31 +332,11 @@ bool createEntities()
       ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
       "cmd_vel_filtered"));
 
-  rcl_ret_t rc = rclc_parameter_server_init_default(&param_server, &node);
-  if (RCL_RET_OK != rc)
-  {
-    return false;
-  }
-
-  RCCHECK(rclc_add_parameter(&param_server, "encoder_offset", RCLC_PARAMETER_DOUBLE));
-  RCCHECK(rclc_parameter_set_double(&param_server, "encoder_offset", (double)DEFAULT_ENCODER_OFFSET));
-  RCCHECK(rclc_add_parameter_constraint_double(&param_server, "encoder_offset", 0.0, 360.0, 0.1));
-
-  RCCHECK(rclc_add_parameter(&param_server, "wheelbase", RCLC_PARAMETER_DOUBLE));
-  RCCHECK(rclc_parameter_set_double(&param_server, "wheelbase", (double)DEFAULT_WHEELBASE));
-  RCCHECK(rclc_add_parameter_constraint_double(&param_server, "wheelbase", 0.05, 1.0, 0.001));
-
-  RCCHECK(rclc_add_parameter(&param_server, "track_width", RCLC_PARAMETER_DOUBLE));
-  RCCHECK(rclc_parameter_set_double(&param_server, "track_width", (double)DEFAULT_TRACK_WIDTH));
-  RCCHECK(rclc_add_parameter_constraint_double(&param_server, "track_width", 0.05, 1.0, 0.001));
-
-  RCCHECK(rclc_add_parameter(&param_server, "max_steering_angle", RCLC_PARAMETER_DOUBLE));
-  RCCHECK(rclc_parameter_set_double(&param_server, "max_steering_angle", (double)MAX_STEERING_ANGLE_DEG));
-  RCCHECK(rclc_add_parameter_constraint_double(&param_server, "max_steering_angle", 0.0, 90.0, 0.1));
-
-  RCCHECK(rclc_add_parameter(&param_server, "max_rpm", RCLC_PARAMETER_DOUBLE));
-  RCCHECK(rclc_parameter_set_double(&param_server, "max_rpm", (double)MAX_RPM));
-  RCCHECK(rclc_add_parameter_constraint_double(&param_server, "max_rpm", 0.0, 1000.0, 1.0));
+  RCCHECK(rclc_subscription_init_best_effort(
+      &car_config_subscriber,
+      &node,
+      ROSIDL_GET_MSG_TYPE_SUPPORT(car_config_msg, msg, CarConfig),
+      "car/config"));
 
   car.steeringMotor.setEncoderOffset(DEFAULT_ENCODER_OFFSET);
   car.wheelbase = DEFAULT_WHEELBASE;
@@ -468,7 +364,8 @@ bool createEntities()
       kinematicsCallback));
 
   executor = rclc_executor_get_zero_initialized_executor();
-  RCCHECK(rclc_executor_init(&executor, &support.context, 10, &allocator));
+  // 2 subscriptions + 3 timers = 5 handles
+  RCCHECK(rclc_executor_init(&executor, &support.context, 5, &allocator));
 
   RCCHECK(rclc_executor_add_subscription(
       &executor,
@@ -476,10 +373,15 @@ bool createEntities()
       &twist_msg,
       &twistCallback,
       ON_NEW_DATA));
+  RCCHECK(rclc_executor_add_subscription(
+      &executor,
+      &car_config_subscriber,
+      &car_config_msg,
+      &carConfigCallback,
+      ON_NEW_DATA));
   RCCHECK(rclc_executor_add_timer(&executor, &control_timer));
   RCCHECK(rclc_executor_add_timer(&executor, &debug_timer));
   RCCHECK(rclc_executor_add_timer(&executor, &kinematics_timer));
-  RCCHECK(rclc_executor_add_parameter_server(&executor, &param_server, onParameterChanged));
 
   syncTime();
 
@@ -491,18 +393,18 @@ bool destroyEntities()
   rmw_context_t *rmw_context = rcl_context_get_rmw_context(&support.context);
   (void)rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
 
-  rcl_publisher_fini(&robot_state_publisher, &node);
-  rcl_publisher_fini(&debug_publisher, &node);
-  rcl_subscription_fini(&twist_subscriber, &node);
-  rclc_parameter_server_fini(&param_server, &node);
-  rcl_node_fini(&node);
-  rcl_timer_fini(&control_timer);
-  rcl_timer_fini(&debug_timer);
-  rcl_timer_fini(&kinematics_timer);
-  rclc_executor_fini(&executor);
-  rclc_support_fini(&support);
+  rcl_ret_t rc = rcl_publisher_fini(&car_state_publisher, &node);
+  rc += rcl_publisher_fini(&debug_publisher, &node);
+  rc += rcl_subscription_fini(&twist_subscriber, &node);
+  rc += rcl_subscription_fini(&car_config_subscriber, &node);
+  rc += rcl_node_fini(&node);
+  rc += rcl_timer_fini(&control_timer);
+  rc += rcl_timer_fini(&debug_timer);
+  rc += rcl_timer_fini(&kinematics_timer);
+  rc += rclc_executor_fini(&executor);
+  rc += rclc_support_fini(&support);
 
-  return true;
+  return rc == RCL_RET_OK;
 }
 
 void moveBase()
@@ -529,7 +431,7 @@ void moveBase()
   if (steering_angle < -max_steering_angle)
     steering_angle = -max_steering_angle;
 
-  float speed_rpm = (linear_x / WHEEL_RADIUS_M) * (60.0f / (2.0f * M_PI));
+  float speed_rpm = (linear_x / wheel_radius) * (60.0f / (2.0f * M_PI));
 
   if (speed_rpm > max_rpm)
     speed_rpm = max_rpm;
@@ -548,25 +450,43 @@ void publishData()
 {
   SensorData sensor_data = sensor_manager.getLatestData();
 
-  robot_state_msg.accel_x = sensor_data.accel_x;
-  robot_state_msg.accel_y = sensor_data.accel_y;
-  robot_state_msg.accel_z = sensor_data.accel_z;
-  robot_state_msg.gyro_x = sensor_data.gyro_x;
-  robot_state_msg.gyro_y = sensor_data.gyro_y;
-  robot_state_msg.gyro_z = sensor_data.gyro_z;
-  robot_state_msg.speed = car.speed;
-  robot_state_msg.steering_angle = car.getActualSteeringAngle();
-  robot_state_msg.right_motor_rpm = car.getRightMotorRPM();
-  robot_state_msg.left_motor_rpm = car.getLeftMotorRPM();
+  car_state_msg.accel_x = sensor_data.accel_x;
+  car_state_msg.accel_y = sensor_data.accel_y;
+  car_state_msg.accel_z = sensor_data.accel_z;
+  car_state_msg.gyro_x = sensor_data.gyro_x;
+  car_state_msg.gyro_y = sensor_data.gyro_y;
+  car_state_msg.gyro_z = sensor_data.gyro_z;
+  car_state_msg.speed = car.speed;
+  car_state_msg.steering_angle = car.getActualSteeringAngle();
+  car_state_msg.right_motor_rpm = car.getRightMotorRPM();
+  car_state_msg.left_motor_rpm = car.getLeftMotorRPM();
 
   struct timespec time_stamp = getTime();
-  robot_state_msg.header.stamp.sec = time_stamp.tv_sec;
-  robot_state_msg.header.stamp.nanosec = time_stamp.tv_nsec;
-  robot_state_msg.header.frame_id.data = "base_link";
-  robot_state_msg.header.frame_id.size = 9;
-  robot_state_msg.header.frame_id.capacity = 9;
+  car_state_msg.header.stamp.sec = time_stamp.tv_sec;
+  car_state_msg.header.stamp.nanosec = time_stamp.tv_nsec;
+  car_state_msg.header.frame_id.data = "base_link";
+  car_state_msg.header.frame_id.size = 9;
+  car_state_msg.header.frame_id.capacity = 9;
 
-  RCSOFTCHECK(rcl_publish(&robot_state_publisher, &robot_state_msg, NULL));
+  RCSOFTCHECK(rcl_publish(&car_state_publisher, &car_state_msg, NULL));
+}
+
+void carConfigCallback(const void *msgin)
+{
+  const car_config_msg__msg__CarConfig *config = (const car_config_msg__msg__CarConfig *)msgin;
+
+  if (config == NULL)
+  {
+    return;
+  }
+
+  // Update car configuration from received message
+  car.wheelbase = (float)config->wheelbase;
+  car.trackWidth = (float)config->track_width;
+  wheel_radius = (float)config->wheel_radius;
+  car.steeringMotor.setEncoderOffset((float)config->encoder_offset);
+  max_steering_angle = (float)config->max_steering_angle;
+  max_rpm = (float)config->max_rpm;
 }
 
 void syncTime()

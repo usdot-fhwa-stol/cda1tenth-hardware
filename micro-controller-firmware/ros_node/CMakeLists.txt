@@ -16,7 +16,8 @@ find_package(geometry_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
-find_package(robot_state_msgs REQUIRED)
+find_package(car_state_msg REQUIRED)
+find_package(car_config_msg REQUIRED)
 
 # Note: This package uses Python-only implementation
 # No C++ executables are built

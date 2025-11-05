@@ -1,4 +1,4 @@
-# Optimized robot state message for minimal size
+# Optimized car state message for minimal size
 
 # Header with timestamp and frame_id
 std_msgs/Header header

@@ -1,6 +1,6 @@
 # Car Odometry Node
 
-This ROS2 package provides odometry calculation and cmd_vel filtering for car-like robots using the unified RobotState message format.
+This ROS2 package provides odometry calculation and cmd_vel filtering for car-like robots using the unified CarState message format.
 
 ## Quick Start
 
@@ -10,7 +10,7 @@ sudo apt install ros-humble-sensor-msgs ros-humble-nav-msgs ros-humble-geometry-
 
 # 2. Build dependencies first
 cd /path/to/your/workspace/extra_packages
-colcon build --packages-select robot_state_msgs
+colcon build --packages-select car_state_msg car_config_msg
 source install/setup.bash
 
 # 3. Build the odometry package
@@ -26,7 +26,7 @@ ros2 run car_odometry cmd_vel_filter.py
 ros2 launch car_odometry car_system.launch.py
 ```
 
-**⚠️ Important**: Always build `robot_state_msgs` before `car_odometry` to avoid build errors.
+**⚠️ Important**: Always build `car_state_msg` and `car_config_msg` before `car_odometry` to avoid build errors.
 
 ## Overview
 
@@ -34,11 +34,12 @@ This package provides two main nodes:
 
 ### Odometry Node
 The odometry node subscribes to:
-- `/robot_state` - Unified robot state message containing IMU and motor data
+- `/car/car_state` - Unified car state message containing IMU and motor data
 
 And publishes:
-- `/odom` - Standard ROS2 odometry message
-- `/odom_twist` - Twist message for debugging
+- `/car/odom` - Standard ROS2 odometry message
+- `/car/odom_twist` - Twist message for debugging
+- `/car/config` - Car configuration message (wheelbase, track width, encoder offset, etc.)
 - TF transforms from `odom` to `base_link`
 
 ### CmdVel Filter Node
@@ -48,28 +49,38 @@ The cmd_vel filter node subscribes to:
 And publishes:
 - `/cmd_vel_filtered` - Filtered velocity commands at constant rate
 
-## RobotState Message Integration
+## CarState Message Integration
 
-This node has been updated to use the unified RobotState message instead of separate IMU and motor topics. This provides:
+This node uses the unified `CarState` message for synchronized sensor data and `CarConfig` message for vehicle configuration. This provides:
 
 - **Simplified Architecture**: Single message type instead of multiple separate topics
 - **Synchronized Data**: All sensor data arrives in a single, synchronized message
 - **Reduced Network Overhead**: Single message instead of multiple separate messages
 - **Easier Integration**: Simpler subscriber logic and data management
 - **Better Performance**: Reduced message passing overhead
+- **Dynamic Configuration**: Car parameters can be updated at runtime via `CarConfig` message
 
-### RobotState Message Structure
+### CarState Message Structure
 
-The RobotState message contains:
+The `CarState` message contains:
 - **Header**: Standard ROS header with timestamp and frame_id
 - **IMU Data**: `accel_x`, `accel_y`, `accel_z`, `gyro_x`, `gyro_y`, `gyro_z`
 - **Motor Data**: `speed`, `steering_angle`, `right_motor_rpm`, `left_motor_rpm`
+
+### CarConfig Message Structure
+
+The `CarConfig` message contains:
+- **Physical Parameters**: `wheelbase`, `track_width`, `wheel_radius`
+- **Control Parameters**: `encoder_offset`, `max_steering_angle`, `max_rpm`
+
+The odometry node publishes this configuration at 1 Hz based on ROS parameters, allowing the ESP32 microcontroller to receive dynamic configuration updates.
 
 ## Features
 
 ### Odometry Node
 - **Dual odometry calculation**: Uses both wheel encoders and IMU data
-- **Configurable parameters**: Wheel radius, wheelbase, track width
+- **Configurable parameters**: Wheel radius, wheelbase, track width, encoder offset, control limits
+- **Dynamic configuration**: Publishes car configuration to ESP32 via `CarConfig` message
 - **Covariance estimation**: Proper uncertainty modeling
 - **TF broadcasting**: Standard ROS2 transform tree
 
@@ -81,7 +92,8 @@ The RobotState message contains:
 
 ### General
 - **Python implementation**: Clean, maintainable Python code
-- **Unified message format**: Uses RobotState message for synchronized sensor data
+- **Unified message format**: Uses CarState message for synchronized sensor data
+- **Parameter-based configuration**: All vehicle parameters configurable via ROS parameters
 
 ## Installation
 
@@ -98,12 +110,12 @@ sudo apt install ros-humble-ament-cmake-python
 
 **⚠️ Important: Build Dependencies First**
 
-This package depends on the custom `robot_state_msgs` package, which must be built first:
+This package depends on the custom `car_state_msg` and `car_config_msg` packages, which must be built first:
 
 ```bash
-# 1. Build the custom message package first
+# 1. Build the custom message packages first
 cd /path/to/your/workspace/extra_packages
-colcon build --packages-select robot_state_msgs
+colcon build --packages-select car_state_msg car_config_msg
 source install/setup.bash
 
 # 2. Build the car_odometry package
@@ -167,24 +179,31 @@ ros2 run car_odometry odometry_node --ros-args --params-file config/car_params.y
 
 | Parameter | Default | Description |
 |-----------|----------|-------------|
-| `wheel_radius` | 0.03 | Wheel radius in meters |
-| `wheelbase` | 0.185 | Distance between front and rear axles |
-| `track_width` | 0.15 | Distance between left and right wheels |
+| `wheel_radius` | 0.0325 | Wheel radius in meters |
+| `wheelbase` | 0.185 | Distance between front and rear axles (meters) |
+| `track_width` | 0.15 | Distance between left and right wheels (meters) |
+| `encoder_offset` | 187.5 | Steering encoder offset in degrees (0-360) |
+| `max_steering_angle` | 30.0 | Maximum steering angle in degrees |
+| `max_rpm` | 300.0 | Maximum motor RPM |
+| `velocity_threshold` | 0.001 | Minimum linear velocity (m/s) - below this is treated as 0 |
+| `angular_threshold` | 0.001 | Minimum angular velocity (rad/s) - below this is treated as 0 |
 | `publish_rate` | 50.0 | Odometry publishing rate in Hz |
 | `frame_id` | "odom" | Odometry frame ID |
 | `child_frame_id` | "base_link" | Base link frame ID |
+| `debug_log_frequency` | 50 | Log every Nth message (set to 0 to disable) |
 
 ## Topics
 
 ### Subscribed Topics
 
-- `/robot_state` (robot_state_msgs/RobotState): Unified robot state message containing IMU and motor data
+- `/car/car_state` (car_state_msg/CarState): Unified car state message containing IMU and motor data
 - `/cmd_vel` (geometry_msgs/Twist): Input velocity commands (for cmd_vel_filter)
 
 ### Published Topics
 
-- `/odom` (nav_msgs/Odometry): Calculated odometry
-- `/odom_twist` (geometry_msgs/Twist): Linear and angular velocities
+- `/car/odom` (nav_msgs/Odometry): Calculated odometry
+- `/car/odom_twist` (geometry_msgs/Twist): Linear and angular velocities
+- `/car/config` (car_config_msg/CarConfig): Car configuration message (published at 1 Hz)
 - `/cmd_vel_filtered` (geometry_msgs/Twist): Filtered velocity commands at constant rate
 - TF transforms: `odom` → `base_link`
 
@@ -228,8 +247,11 @@ ros2 run tf2_tools view_frames
 ### Monitor Sensor Data
 
 ```bash
-# Check robot state data
-ros2 topic echo /robot_state
+# Check car state data
+ros2 topic echo /car/car_state
+
+# Check car configuration
+ros2 topic echo /car/config
 
 # List all topics
 ros2 topic list
@@ -249,7 +271,7 @@ ros2 run rviz2 rviz2 -d config/odometry.rviz
 The package includes test scripts to verify both odometry and cmd_vel filter functionality:
 
 ```bash
-# Test odometry with RobotState messages
+# Test odometry with CarState messages
 ros2 run car_odometry test_robot_state_odometry.py
 ros2 launch car_odometry test_robot_state_odometry.launch.py
 
@@ -267,12 +289,14 @@ The test scripts verify that:
 
 ### Topic Mapping
 
-| Old Topics | New Topic |
-|------------|-----------|
-| `/imu/data` | `/robot_state` |
-| `/motor_data` | `/robot_state` |
-| `/odom` | `/odom` (unchanged) |
-| `/odom_twist` | `/odom_twist` (unchanged) |
+| Component | Topic | Full Path |
+|-----------|-------|-----------|
+| Car State (ESP32 → ROS) | `car_state` | `/car/car_state` |
+| Car Config (ROS → ESP32) | `car_config` | `/car/config` |
+| Odometry | `odom` | `/car/odom` |
+| Odometry Twist | `odom_twist` | `/car/odom_twist` |
+| Debug Data | `debug_data` | `/car/debug_data` |
+| Cmd Vel Filtered | `cmd_vel_filtered` | `/cmd_vel_filtered` |
 
 ## Troubleshooting
 
@@ -284,14 +308,14 @@ The test scripts verify that:
    ```
    **Solution**: The CMakeLists.txt has been fixed to use `ament_cmake_python` instead of `ament_python`. If you encounter this error, ensure you have the latest version of the code.
 
-2. **CMake Error: "Could not find robot_state_msgs"**
+2. **CMake Error: "Could not find car_state_msg" or "Could not find car_config_msg"**
    ```
-   CMake Error: Could not find a package configuration file provided by "robot_state_msgs"
+   CMake Error: Could not find a package configuration file provided by "car_state_msg"
    ```
-   **Solution**: Build the `robot_state_msgs` package first:
+   **Solution**: Build the `car_state_msg` and `car_config_msg` packages first:
    ```bash
    cd /path/to/your/workspace/extra_packages
-   colcon build --packages-select robot_state_msgs
+   colcon build --packages-select car_state_msg car_config_msg
    source install/setup.bash
    cd ../ros_node
    colcon build --packages-select car_odometry
@@ -307,7 +331,8 @@ The test scripts verify that:
 
 1. **No odometry published**: Check if sensor data is being received
    ```bash
-   ros2 topic hz /robot_state
+   ros2 topic hz /car/car_state
+   ros2 topic echo /car/car_state
    ```
 
 2. **Incorrect odometry**: Verify robot parameters

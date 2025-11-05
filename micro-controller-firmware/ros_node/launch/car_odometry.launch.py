@@ -51,9 +51,10 @@ def generate_launch_description():
                     }
                 ],
                 remappings=[
-                    ("robot_state", "/car_controller/robot_state"),
-                    ("odom", "/car_controller/odom"),
-                    ("odom_twist", "/car_controller/odom_twist"),
+                    ("car_state", "/car/car_state"),
+                    ("car_config", "/car/config"),
+                    ("odom", "/car/odom"),
+                    ("odom_twist", "/car/odom_twist"),
                 ],
             ),
         ]

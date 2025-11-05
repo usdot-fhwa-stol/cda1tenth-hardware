@@ -3,14 +3,26 @@
 car_odometry_node:
   ros__parameters:
     # Physical robot parameters
-    wheel_radius: 0.0325    # 32.5mm wheel radius
-    wheelbase: 0.185        # 18.5cm wheelbase
-    track_width: 0.15       # 15cm track width
+    wheel_radius: 0.0325    # 32.5mm wheel radius (meters)
+    wheelbase: 0.185        # 18.5cm wheelbase (meters)
+    track_width: 0.15       # 15cm track width (meters)
     
     # Publishing parameters
-    publish_rate: 50.0       # 50Hz odometry publishing
+    publish_rate: 50.0       # 50Hz odometry publishing rate
     frame_id: "odom"         # Odometry frame
     child_frame_id: "base_link"  # Base link frame
+    
+    # Velocity filtering parameters (to prevent drift)
+    velocity_threshold: 0.001    # Minimum linear velocity (m/s) - below this is treated as 0
+    angular_threshold: 0.001    # Minimum angular velocity (rad/s) - below this is treated as 0
+    
+    # Control parameters
+    encoder_offset: 187.5        # Steering encoder offset in degrees (0-360)
+    max_steering_angle: 30.0    # Maximum steering angle in degrees
+    max_rpm: 300.0              # Maximum motor RPM
+    
+    # Debug parameters
+    debug_log_frequency: 50  # Log every Nth message (set to 0 to disable)
     
     # Covariance parameters (adjust based on sensor quality)
     position_covariance:

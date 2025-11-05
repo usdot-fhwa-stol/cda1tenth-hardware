@@ -2,9 +2,9 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd"
              schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-    <name>robot_state_msgs</name>
+    <name>car_state_msg</name>
     <version>0.0.1</version>
-    <description>Custom message definitions for robot state data</description>
+    <description>Custom message definitions for car state data</description>
 
     <maintainer email="you@example.com">Your Name</maintainer>
     <license>Apache-2.0</license>

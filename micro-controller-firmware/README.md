@@ -68,7 +68,7 @@ pio run --target clean_microros
 ```
 
 
-add robot_state_msgs to the ROS node by doing the following
+add car_state_msgs to the ROS node by doing the following
 1. navigate to your ROS 2 workspace
    - if you don't have one make it with the following commands:
        mkdir -p ~/ros2_ws/src
