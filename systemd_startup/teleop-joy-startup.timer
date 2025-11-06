@@ -1,0 +1,9 @@
+[Unit]
+Description=Start ROS2 teleop nodes on 20-second timer
+
+[Timer]
+OnStartupSec=20s
+Unit=teleop-joy-startup.service
+
+[Install]
+WantedBy=multi-user.target

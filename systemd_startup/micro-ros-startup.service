@@ -1,0 +1,11 @@
+[Unit]
+Description=Start the micro ros agent to communicate with the ESP32 and motors
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/bin/micro-ros-startup.sh
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
