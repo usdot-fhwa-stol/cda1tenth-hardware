@@ -1,8 +1,11 @@
+# Micro-controller Firmware
+
 ## Building and Running
 
 0. Install Platform IO using the following installation [guide](https://docs.platformio.org/en/latest/integration/ide/vscode.html#installation)
 
 1. Build the project:
+
    ```bash
    pio run
    ```
@@ -12,73 +15,76 @@
 3. Put the ESP32 into the manual bootloader mode ([docs by EXPRESSIF](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html#manual-bootloader)).
 
 4. Upload to your ESP32:
+
    ```bash
    pio run --target upload
    ```
 
 5. Monitor serial output:
+
    ```bash
    pio device monitor
    ```
 
-## Installing and Running the Micro-Ros Agent
+## Configuring the Car Controller
 
-1. Installing the Micro-Ros Agent
-```bash
-source /opt/ros/humble/setup.bash
+The `car_controller` node on the ESP32 receives its configuration from the `car_odometry` node via the `/car/config` topic. To configure parameters such as `encoder_offset`, `wheel_radius`, `wheelbase`, `track_width`, `max_steering_angle`, and `max_rpm`, you need to set them in the `car_odometry` node.
 
-mkdir uros_ws && cd uros_ws
+For detailed instructions on how to configure the `car_odometry` node and set parameters like `encoder_offset`, please refer to the [car_odometry README](https://github.com/Michael7371/cda1tenth-bringup/blob/develop/car_odom_node/README.md).
 
-git clone -b humble https://github.com/micro-ROS/micro_ros_setup.git src/micro_ros_setup
+The `car_odometry` node publishes configuration messages to `/car/config` at 1 Hz, which the `car_controller` node subscribes to and uses to update its internal parameters.
 
-rosdep update && rosdep install --from-paths src --ignore-src -y
+### Quick Reference
 
-colcon build
+The `encoder_offset` parameter is particularly important for accurate steering control. It compensates for the initial encoder position and should be calibrated for your specific hardware setup. Other key parameters include:
 
-source install/local_setup.bash
-```
+- `wheel_radius`: Wheel radius in meters (default: 0.0325)
+- `wheelbase`: Distance between front and rear axles in meters (default: 0.185)
+- `track_width`: Distance between left and right wheels in meters (default: 0.15)
+- `encoder_offset`: Steering encoder offset in degrees (default: 187.5)
+- `max_steering_angle`: Maximum steering angle in degrees (default: 30.0)
+- `max_rpm`: Maximum motor RPM (default: 300.0)
 
-2. Running the Micro-Ros Agent
-```bash
-ros2 run micro_ros_agent micro_ros_agent serial --dev $DEVICE -b $BAUD
-```
+See the [car_odometry README](https://github.com/Michael7371/cda1tenth-bringup/blob/develop/car_odom_node/README.md) for complete parameter documentation and configuration instructions.
 
-3. Testing Odometry Publisher
-```bash
-ros2 topic list
+## Installing Custom Message Packages
 
-ros2 topic echo /odom
-```
+The firmware uses custom ROS 2 message packages (`car_state_msg` and `car_config_msg`) that need to be built in your ROS 2 workspace.
 
-4. Testing ROS Parameters
-```bash
-ros2 param set  /car_controller wheel_radius <value>
-ros2 param set  /car_controller wheelbase <value>
-ros2 param set  /car_controller odom_period_ms <value>
+1. Navigate to your ROS 2 workspace:
 
-ros2 param get /car_controller wheel_radius
-ros2 param get  /car_controller wheelbase 
-ros2 param get  /car_controller odom_period_ms 
-```
+   ```bash
+   # If you don't have a workspace, create one:
+   mkdir -p ~/ros2_ws/src
+   cd ~/ros2_ws/src
+   ```
 
-https://github.com/micro-ROS/micro_ros_platformio
+2. Copy the message packages from `extra_packages/` to your workspace:
 
-```bash
-pio run --target clean_microros
-```
+   ```bash
+   # Copy car_state_msg and car_config_msg to your workspace src directory
+   ```
 
+3. Resolve dependencies:
 
-add car_state_msgs to the ROS node by doing the following
-1. navigate to your ROS 2 workspace
-   - if you don't have one make it with the following commands:
-       mkdir -p ~/ros2_ws/src
-    cd ~/ros2_ws/src
-2. resolve any required dependencies:
-  cd ~/ros2_ws
-    rosdep install --from-paths src --ignore-src -r -y
+   ```bash
+   cd ~/ros2_ws
+   rosdep install --from-paths src --ignore-src -r -y
+   ```
 
-3. install the package:
-colcon build
+4. Build the packages:
 
-4. source your workspace:
-source install/local_setup.bash
+   ```bash
+   colcon build --packages-select car_state_msg car_config_msg
+   ```
+
+5. Source your workspace:
+
+   ```bash
+   source install/local_setup.bash
+   ```
+
+## Additional Resources
+
+- [micro-ROS PlatformIO](https://github.com/micro-ROS/micro_ros_platformio)
+- Clean micro-ROS build: `pio run --target clean_microros`
