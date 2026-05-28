@@ -19,7 +19,7 @@ Suggested Printer Specs:
 - **A Hardened Nozzle** (Required for abrasive Carbon Fiber filaments)
 - **A High-Temp Hotend** (Capable of up to 320°C, depending on your chosen material)
 - **A Direct Drive Extruder** (Highly recommended for printing the flexible TPU tires)
-- **Filament Drying Equipment** (Nylon and TPU are highly sensitive to moisture; a filament dryer is critical)
+- **Filament Drying Equipment** (Nylon and TPU are highly sensitive to moisture)
 
 ---
 
