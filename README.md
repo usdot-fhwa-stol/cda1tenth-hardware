@@ -16,10 +16,10 @@ This open source repository hosts the hardware development files, 3D-printable c
 
 Suggested Printer Specs:
 
-- **A Hardened Nozzle** (Required for abrasive Carbon Fiber filaments)
+- **A Hardened Nozzle** (Recommended For abrasive Carbon Fiber filaments)
 - **A High-Temp Hotend** (Capable of up to 320°C, depending on your chosen material)
-- **A Direct Drive Extruder** (Highly recommended for printing the flexible TPU tires)
-- **Filament Drying Equipment** (Nylon and TPU are highly sensitive to moisture)
+- **A Direct Drive Extruder** (Recommended for printing the flexible TPU tires)
+- **Filament Drying Equipment** (Recommended for moisture sensitive Nylon and TPU)
 
 ---
 
