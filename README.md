@@ -1,6 +1,6 @@
 # cda1tenth-hardware
 
-This open source repository hosts the hardware development files, 3D-printable components, and assembly instructions for a **CDA 1Tenth** car. This 1/10th scale setup serves as a lower-cost research platform. It enables the development, testing, and validation of CDA features prior to full-scale deployment. Documents detailing parts is available upon request.
+This open source repository hosts the hardware development files, 3D-printable components, and assembly instructions for a **CDA 1Tenth** car. This 1/10th scale setup serves as a lower-cost research platform. It enables the development, testing, and validation of CDA features prior to full-scale deployment. For support with further documentation, a bill of materials, or the build, contact: CAVSupportServices@dot.gov
 
 ---
 
