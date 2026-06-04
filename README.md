@@ -6,7 +6,7 @@ This open source repository hosts the hardware development files, 3D-printable c
 
 ## Related Repositories
 
-- **CDA 1Tenth Bringup:** The software configurations, drivers, and launch files required to run the CDA 1Tenth hardware, [Bringup GitHub](https://github.com/usdot-fhwa-stol/cda1tenth-bringup/tree/develop).
+- <a name="cda-1tenth-bringup"></a>**CDA 1Tenth Bringup:** The software configurations, drivers, and launch files required to run the CDA 1Tenth hardware, [Bringup GitHub](https://github.com/usdot-fhwa-stol/cda1tenth-bringup/tree/develop).
 - **Navigation2 (Nav2):** A navigation stack for mobile robots built on the ROS framework, [Nav2 GitHub](https://github.com/ros-navigation/navigation2).
 - **Nav2 Extensions**: Small custom package giving extra functionality to Nav2, [Nav2 Extensions GitHub](https://github.com/usdot-fhwa-stol/navigation2-extensions).
 
