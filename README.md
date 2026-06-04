@@ -6,9 +6,9 @@ This open source repository hosts the hardware development files, 3D-printable c
 
 ## Related Repositories
 
-- **CDA 1Tenth Bringup:** The software configurations, drivers, and launch files required to run the CDA 1Tenth hardware, [Bringup Github](https://github.com/usdot-fhwa-stol/cda1tenth-bringup/tree/develop).
-- **Navigation2 (Nav2):** A navigation stack for mobile robots built on the ROS framework, [Nav2 Github](https://github.com/ros-navigation/navigation2).
-- **Nav2 Extensions**: Small custom package giving extra functionality to Nav2, [Nav2 Extensions Github](https://github.com/usdot-fhwa-stol/navigation2-extensions).
+- **CDA 1Tenth Bringup:** The software configurations, drivers, and launch files required to run the CDA 1Tenth hardware, [Bringup GitHub](https://github.com/usdot-fhwa-stol/cda1tenth-bringup/tree/develop).
+- **Navigation2 (Nav2):** A navigation stack for mobile robots built on the ROS framework, [Nav2 GitHub](https://github.com/ros-navigation/navigation2).
+- **Nav2 Extensions**: Small custom package giving extra functionality to Nav2, [Nav2 Extensions GitHub](https://github.com/usdot-fhwa-stol/navigation2-extensions).
 
 ---
 
@@ -16,10 +16,10 @@ This open source repository hosts the hardware development files, 3D-printable c
 
 Suggested Printer Specs:
 
-- **A Hardened Nozzle** (Recommended For abrasive Carbon Fiber filaments)
+- **A Hardened Nozzle** (Recommended for abrasive carbon-fiber filaments)
 - **A High-Temp Hotend** (Capable of up to 320°C, depending on your chosen material)
 - **A Direct Drive Extruder** (Recommended for printing the flexible TPU tires)
-- **Filament Drying Equipment** (Recommended for moisture sensitive Nylon and TPU)
+- **Filament Drying Equipment** (Recommended for moisture-sensitive Nylon and TPU)
 
 ---
 
@@ -28,7 +28,7 @@ Suggested Printer Specs:
 - **CDA (Cooperative Driving Automation):** Technology that enables automated
   vehicles to communicate with other vehicles and infrastructure to improve
   safety and efficiency.
-- **.step & .stl:** File formats used in 3D design and printing. **.stl** is the standard format used by 3D printers to understand shapes, while **.step** is a high-precision engineering format used for editing and manufacturing.
+- **`.step` & `.stl`:** File formats used in 3D design and printing. `.stl` is the standard format used by 3D printers to understand shapes, while `.step` is a high-precision engineering format used for editing and manufacturing.
 
 ---
 
