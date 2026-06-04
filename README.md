@@ -1,12 +1,12 @@
 # cda1tenth-hardware
 
-This open source repository hosts the hardware development files, 3D-printable components, and assembly instructions for a **CDA 1Tenth** vehicle, and the primary repository is cda1tenth-brinup[^1]. CDA 1Tenth is a 1/10th scale setup serving as a lower-cost research platform. It enables the development, testing, and validation of CDA features prior to full-scale deployment. For support with further documentation, a bill of materials, or the build, contact: CAVSupportServices@dot.gov
+This open source repository hosts the hardware development files, 3D-printable components, and assembly instructions for a **CDA 1Tenth** vehicle, and the primary repository is [cda1tenth-bringup](#cda-1tenth-bringup). CDA 1Tenth is a 1/10th scale setup serving as a lower-cost research platform. It enables the development, testing, and validation of CDA features prior to full-scale deployment. For support with further documentation, a bill of materials, or the build, contact: CAVSupportServices@dot.gov
 
 ---
 
 ## Related Repositories
 
-- [^1]**CDA 1Tenth Bringup:** The software configurations, drivers, and launch files required to run the CDA 1Tenth hardware, [Bringup GitHub](https://github.com/usdot-fhwa-stol/cda1tenth-bringup/tree/develop).
+- **CDA 1Tenth Bringup:** The software configurations, drivers, and launch files required to run the CDA 1Tenth hardware, [Bringup GitHub](https://github.com/usdot-fhwa-stol/cda1tenth-bringup/tree/develop).
 - **Navigation2 (Nav2):** A navigation stack for mobile robots built on the ROS framework, [Nav2 GitHub](https://github.com/ros-navigation/navigation2).
 - **Nav2 Extensions**: Small custom package giving extra functionality to Nav2, [Nav2 Extensions GitHub](https://github.com/usdot-fhwa-stol/navigation2-extensions).
 
