@@ -7,18 +7,23 @@
 #include <limits.h>
 
 // SPI pin definitions
-#define CS_STEER    41
-#define CS_RIGHT    39
-#define CS_LEFT     40
-#define MOSI_PIN    11
-#define MISO_PIN    13
-#define SCK_PIN     12
-#define EN_PIN       4
+#define CS_STEER 41
+#define CS_RIGHT 39
+#define CS_LEFT 40
+#define MOSI_PIN 11
+#define MISO_PIN 13
+#define SCK_PIN 12
+#define EN_PIN 4
 
 // Stepper and driver parameters
 #define R_SENSE 0.075f
 #define MOTOR_STEPS 200
 #define MICROSTEPS 16
+
+#define STEERING_RUN_CURRENT_MA 350
+#define STEERING_HOLD_MULTIPLIER 0.20f
+#define DRIVE_RUN_CURRENT_MA 800
+#define DRIVE_HOLD_MULTIPLIER 0.30f
 
 // Steering sensor parameters
 #define STEERING_SENSOR_PIN 18
@@ -27,12 +32,14 @@
 
 // Steering control parameters
 #define STEERING_CORRECTION_INTERVAL 10000
-#define STEERING_GEAR_RATIO (55.0f/12.0f)
-#define STEERING_MAX_ALLOWED_ERROR 1.5f
+#define STEERING_GEAR_RATIO (55.0f / 12.0f)
+#define STEERING_CORRECTION_START_ERROR_DEG 1.5f
+#define STEERING_CORRECTION_STOP_ERROR_DEG 1.0f
 #define STALL_DETECTION_COUNT 8
 #define SMALL_MOVEMENT_THRESHOLD 0.2f
 
-class SteeringMotor {
+class SteeringMotor
+{
 public:
   TMC5160Stepper driver;
   int cs_pin;
@@ -43,7 +50,8 @@ public:
   int stallCounter = 0;
   float carSpeed = 0.0f;
   bool motorEnabled = true;
-  
+  bool correctionActive = false;
+
   SteeringMotor(int cs);
   void begin();
   void setTargetAngle(float angle);
@@ -55,22 +63,23 @@ public:
   float normalizeAngle(float angle) const;
 };
 
-class DriveMotor {
+class DriveMotor
+{
 public:
   TMC5160Stepper driver;
   int cs_pin;
   uint32_t target_steps_per_sec = 0;
   uint32_t last_time = 0;
   float target_rpm = 0.0f;
-  
+
   // Control loop variables
   int32_t last_enc = 0;
   float step_rate_cmd = 0.0f;
   float current_rpm = 0.0f;
-  
+
   // Non-blocking control state
   bool driver_ready = true;
-  
+
   // Control constants
   static const int ENCODER_TICKS_PER_REVOLUTION = 4096;
 
@@ -81,8 +90,8 @@ public:
   float getCurrentRPM() const;
 };
 
-
-class Car {
+class Car
+{
 public:
   float speed = 0.0f;
   float steeringAngle = 0.0f;
@@ -112,4 +121,4 @@ private:
   void applyMotorSpeeds();
 };
 
-#endif // CAR_H   
+#endif // CAR_H
